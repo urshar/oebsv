@@ -60,7 +60,7 @@ class ParaAthleteController extends Controller
 
     public function show(ParaAthlete $athlete)
     {
-        $athlete->load(['nation', 'club', 'classifications']);
+        $athlete->load(['nation', 'club', 'classifications.classifiers']);
 
         $activeClassification = $athlete->activeClassification();
 

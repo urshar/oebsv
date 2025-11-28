@@ -11,12 +11,15 @@ class ParaAthleteClassificationController extends Controller
 {
     public function index(ParaAthlete $athlete)
     {
-        $athlete->load('classifications');
+        $classifications = $athlete->classifications()
+            ->with('classifiers')             // wichtig wegen tech1/tech2/med
+            ->orderByDesc('classification_date')
+            ->get();
 
-        return view('athletes.classifications.index', [
-            'athlete'        => $athlete,
-            'classifications'=> $athlete->classifications,
-        ]);
+        return view('athletes.classifications.index', compact(
+            'athlete',
+            'classifications'
+        ));
     }
 
     public function create(ParaAthlete $athlete)

@@ -8,6 +8,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class ParaAthleteClassification extends Model
 {
+    protected $casts = [
+        'classification_date' => 'date',   // damit wir ->format() nutzen können
+    ];
+
     protected $fillable = [
         'para_athlete_id',
         'classification_date',
@@ -39,19 +43,19 @@ class ParaAthleteClassification extends Model
     }
 
     // Praktische Helper:
-    public function classifierByRole(string $role): ?ParaClassifier
+    public function getTech1Attribute(): ?ParaClassifier
     {
-        return $this->classifiers->firstWhere('pivot.role', $role);
+        return $this->classifiers->firstWhere('pivot.role', 'TECH1');
     }
 
-    public function getTechClassifier1Attribute(): ?ParaClassifier
+    public function getTech2Attribute(): ?ParaClassifier
     {
-        return $this->classifierByRole('TECH1');
+        return $this->classifiers->firstWhere('pivot.role', 'TECH2');
     }
 
-    public function getTechClassifier2Attribute(): ?ParaClassifier
+    public function getMedAttribute(): ?ParaClassifier
     {
-        return $this->classifierByRole('TECH2');
+        return $this->classifiers->firstWhere('pivot.role', 'MED');
     }
 
     public function getMedClassifierModelAttribute(): ?ParaClassifier

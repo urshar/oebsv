@@ -75,9 +75,28 @@
                         <tr>
                             <th>Panel</th>
                             <td>
-                                Tech 1: {{ $activeClassification->tech_classifier_1 }}<br>
-                                Tech 2: {{ $activeClassification->tech_classifier_2 }}<br>
-                                Med: {{ $activeClassification->med_classifier }}
+                                Tech 1:
+                                @if($activeClassification && $activeClassification->tech1)
+                                    {{ $activeClassification->tech1->fullName }}
+                                @else
+                                    -
+                                @endif
+                                <br>
+
+                                Tech 2:
+                                @if($activeClassification && $activeClassification->tech2)
+                                    {{ $activeClassification->tech2->fullName }}
+                                @else
+                                    -
+                                @endif
+                                <br>
+
+                                Med:
+                                @if($activeClassification && $activeClassification->med)
+                                    {{ $activeClassification->med->fullName }}
+                                @else
+                                    -
+                                @endif
                             </td>
                         </tr>
                         @if($activeClassification->notes)
