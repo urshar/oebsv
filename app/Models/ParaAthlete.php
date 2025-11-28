@@ -77,9 +77,11 @@ class ParaAthlete extends Model
      * Komfort: aktive / letzte Klassifikation.
      * (Jüngste nach Datum; falls es keine gibt, null)
      */
-    public function activeClassification(): null
+    public function activeClassification(): ?ParaAthleteClassification
     {
-        return $this->classifications()->first();
+        return $this->classifications()
+            ->orderByDesc('classification_date')
+            ->first();
     }
 
     /**

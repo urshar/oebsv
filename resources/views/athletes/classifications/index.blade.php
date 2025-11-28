@@ -59,11 +59,11 @@
                             Med: {{ $c->med_classifier }}
                         </td>
                         <td class="text-end">
-                            <a href="{{ route('athletes.classifications.edit', [$athlete, $c]) }}"
+                            <a href="{{ route('classifications.edit', [$athlete, $c]) }}"
                                class="btn btn-sm btn-outline-secondary">
                                 Bearbeiten
                             </a>
-                            <form action="{{ route('athletes.classifications.destroy', $c) }}"
+                            <form action="{{ route('classifications.destroy', $c) }}"
                                   method="POST"
                                   class="d-inline"
                                   onsubmit="return confirm('Klassifikation wirklich löschen?');">

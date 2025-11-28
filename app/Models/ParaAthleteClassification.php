@@ -2,21 +2,27 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class ParaAthleteClassification extends Model
 {
-    use HasFactory;
-
-    protected $table = 'para_athlete_classifications';
-
-    protected $guarded = [];
-
-    protected $casts = [
-        'classification_date' => 'date',
-        'is_international'    => 'boolean',
+    protected $fillable = [
+        'para_athlete_id',
+        'classification_date',
+        'location',
+        'is_international',
+        'wps_license',
+        'sportclass_s',
+        'sportclass_sb',
+        'sportclass_sm',
+        'sportclass_exception',
+        'status',
+        'tech_classifier_1',   // alte String-Felder – kannst du später entfernen
+        'tech_classifier_2',
+        'med_classifier',
+        'notes',
     ];
 
     public function athlete(): BelongsTo
@@ -24,42 +30,32 @@ class ParaAthleteClassification extends Model
         return $this->belongsTo(ParaAthlete::class, 'para_athlete_id');
     }
 
-    /**
-     * Nach dem Speichern / Löschen die Athleten-Klassenfelder aktualisieren.
-     */
-    protected static function booted(): void
+    public function classifiers(): BelongsToMany
     {
-        static::saved(function (ParaAthleteClassification $classification) {
-            if ($classification->athlete) {
-                $classification->athlete->syncSportclassFromActiveClassification();
-            }
-        });
-
-        static::deleted(function (ParaAthleteClassification $classification) {
-            if ($classification->athlete) {
-                $classification->athlete->syncSportclassFromActiveClassification();
-            }
-        });
+        return $this->belongsToMany(ParaClassifier::class,
+            'para_athlete_classification_classifier')
+            ->withPivot('role')
+            ->withTimestamps();
     }
 
-    public function classifiers()
+    // Praktische Helper:
+    public function classifierByRole(string $role): ?ParaClassifier
     {
-        return $this->belongsToMany(
-            ParaClassifier::class,
-            'para_athlete_classification_classifier',
-            'para_athlete_classification_id',
-            'para_classifier_id'
-        )->withPivot('role')->withTimestamps();
+        return $this->classifiers->firstWhere('pivot.role', $role);
     }
 
-    public function techClassifiers()
+    public function getTechClassifier1Attribute(): ?ParaClassifier
     {
-        return $this->classifiers()->wherePivotIn('role', ['TECH1', 'TECH2']);
+        return $this->classifierByRole('TECH1');
     }
 
-    public function medClassifier()
+    public function getTechClassifier2Attribute(): ?ParaClassifier
     {
-        return $this->classifiers()->wherePivot('role', 'MED');
+        return $this->classifierByRole('TECH2');
     }
 
+    public function getMedClassifierModelAttribute(): ?ParaClassifier
+    {
+        return $this->classifierByRole('MED');
+    }
 }

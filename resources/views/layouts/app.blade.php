@@ -50,6 +50,10 @@
                class="text-white text-decoration-none {{ request()->is('athletes*') ? 'fw-bold text-decoration-underline' : '' }}">
                 Athletes
             </a>
+            <a href="{{ route('classifiers.index') }}"
+               class="text-white text-decoration-none {{ request()->is('classifiers*') ? 'fw-bold text-decoration-underline' : '' }}">
+                Klassifier
+            </a>
         </nav>
     </div>
 </header>

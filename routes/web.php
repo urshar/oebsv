@@ -3,6 +3,7 @@
 use App\Http\Controllers\MeetAthleteController;
 use App\Http\Controllers\ParaAthleteClassificationController;
 use App\Http\Controllers\ParaAthleteController;
+use App\Http\Controllers\ParaClassifierController;
 use App\Http\Controllers\ParaEventAgegroupController;
 use App\Http\Controllers\ParaEventController;
 use App\Http\Controllers\ParaMeetController;
@@ -66,3 +67,5 @@ Route::resource('athletes', ParaAthleteController::class);
 
 // Nested CRUD for classification history
 Route::resource('athletes.classifications', ParaAthleteClassificationController::class)->shallow();
+
+Route::resource('classifiers', ParaClassifierController::class);
