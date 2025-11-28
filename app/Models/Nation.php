@@ -59,7 +59,7 @@ class Nation extends Model
 
     public function continent(): BelongsTo
     {
-        return $this->belongsTo(Continent::class);
+        return $this->belongsTo(Continent::class, 'continent_id');
     }
 
     public function subregions(): HasMany

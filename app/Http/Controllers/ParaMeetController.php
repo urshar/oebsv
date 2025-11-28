@@ -4,10 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\ParaEntry;
 use App\Models\ParaMeet;
+use App\Models\Continent;
 use Illuminate\Http\Request;
 
 class ParaMeetController extends Controller
 {
+    /**
+     * Übersicht aller Meetings
+     */
     public function index()
     {
         $meets = ParaMeet::with('nation')
@@ -17,9 +21,12 @@ class ParaMeetController extends Controller
         return view('meets.index', compact('meets'));
     }
 
+    /**
+     * Detailansicht eines Meetings
+     */
     public function show(ParaMeet $meet)
     {
-        // full structure
+        // komplette Struktur laden
         $meet->load([
             'nation',
             'sessions.events.swimstyle',
@@ -29,28 +36,49 @@ class ParaMeetController extends Controller
         return view('meets.show', compact('meet'));
     }
 
-    // optional: editing basic meet data
+    /**
+     * Formular zum Bearbeiten der Meeting-Stammdaten
+     */
 
     public function edit(ParaMeet $meet)
     {
-        return view('meets.edit', compact('meet'));
+        // Kontinente mit Nationen laden, korrekt nach *NameDe/NameEn* sortiert
+        $continents = Continent::with(['nations' => function ($query) {
+            $query
+                ->orderBy('nameDe')
+                ->orderBy('nameEn');
+        }])
+            ->orderBy('nameDe')
+            ->orderBy('nameEn')
+            ->get();
+
+        return view('meets.edit', compact('meet', 'continents'));
     }
 
+
+    /**
+     * Speichert die Änderungen an den Meeting-Stammdaten
+     */
     public function update(Request $request, ParaMeet $meet)
     {
         $data = $request->validate([
-            'name'      => ['required', 'string', 'max:255'],
-            'city'      => ['nullable', 'string', 'max:255'],
-            'from_date' => ['nullable', 'date'],
-            'to_date'   => ['nullable', 'date'],
+            'name'             => ['required', 'string', 'max:255'],
+            'city'             => ['nullable', 'string', 'max:255'],
+            'nation_id'        => ['nullable', 'exists:nations,id'], // <– nutzt deine nations-Tabelle
+            'from_date'        => ['nullable', 'date'],
+            'to_date'          => ['nullable', 'date', 'after_or_equal:from_date'],
+            'entry_start_date' => ['nullable', 'date'],
+            'entry_deadline'   => ['nullable', 'date'],
+            'withdraw_until'   => ['nullable', 'date'],
         ]);
 
         $meet->update($data);
 
         return redirect()
             ->route('meets.show', $meet)
-            ->with('status', 'Meeting updated.');
+            ->with('status', 'Meeting wurde aktualisiert.');
     }
+
 
     /**
      * Entfernt alle Entries (Meldungen) zu einem Meeting.

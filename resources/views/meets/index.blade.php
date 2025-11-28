@@ -2,18 +2,18 @@
 
 @section('content')
     <div class="container">
-        <h1>Meetings</h1>
+        <h1>Para Meetings</h1>
 
         @if(session('status'))
-            <div class="alert alert-success mt-2 mb-3">
+            <div class="alert alert-success mt-2">
                 {{ session('status') }}
             </div>
         @endif
 
         @if($meets->isEmpty())
-            <p>Keine Meetings vorhanden.</p>
+            <p>Derzeit sind keine Meetings vorhanden.</p>
         @else
-            <table class="table table-bordered table-striped">
+            <table class="table table-striped mt-3">
                 <thead>
                 <tr>
                     <th>Name</th>
@@ -29,14 +29,14 @@
                     <tr>
                         <td>{{ $meet->name }}</td>
                         <td>{{ $meet->city }}</td>
-                        <td>{{ $meet->nation?->ioc ?? $meet->nation?->nameEn }}</td>
-                        <td>{{ optional($meet->from_date)->format('d.m.Y') }}</td>
-                        <td>{{ optional($meet->to_date)->format('d.m.Y') }}</td>
+                        <td>{{ optional($meet->nation)->code }}</td>
+                        <td>{{ optional($meet->from_date)?->format('d.m.Y') }}</td>
+                        <td>{{ optional($meet->to_date)?->format('d.m.Y') }}</td>
                         <td class="text-end">
-                            <a href="{{ route('meets.show', $meet) }}" class="btn btn-sm btn-primary">
+                            <a href="{{ route('meets.show', $meet) }}" class="btn btn-sm btn-secondary">
                                 Details
                             </a>
-                            <a href="{{ route('meets.edit', $meet) }}" class="btn btn-sm btn-secondary">
+                            <a href="{{ route('meets.edit', $meet) }}" class="btn btn-sm btn-primary">
                                 Bearbeiten
                             </a>
                         </td>

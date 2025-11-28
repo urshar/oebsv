@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -10,8 +9,6 @@ use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 class ParaMeet extends Model
 {
-    use HasFactory;
-
     protected $table = 'para_meets';
 
     protected $guarded = [];
@@ -31,25 +28,24 @@ class ParaMeet extends Model
         return $this->belongsTo(Nation::class, 'nation_id');
     }
 
-    public function sessions(): HasMany|ParaMeet
+    public function sessions(): HasMany
     {
         return $this->hasMany(ParaSession::class, 'para_meet_id')->orderBy('date')->orderBy('number');
     }
 
-    public function events(): HasManyThrough|ParaMeet
+    public function events(): HasManyThrough
     {
-        // alle Events des Meetings über Sessions
         return $this->hasManyThrough(
             ParaEvent::class,
             ParaSession::class,
-            'para_meet_id',    // FK auf ParaMeet in para_sessions
-            'para_session_id', // FK auf Session in para_events
+            'para_meet_id',
+            'para_session_id',
             'id',
             'id'
         );
     }
 
-    public function entries()
+    public function entries(): HasMany
     {
         return $this->hasMany(ParaEntry::class, 'para_meet_id');
     }

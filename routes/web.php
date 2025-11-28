@@ -44,11 +44,11 @@ Route::get('/meets/{meet}/lenex/entries', [LenexImportController::class, 'create
 Route::post('/meets/{meet}/lenex/entries', [LenexImportController::class, 'storeEntries'])
     ->name('lenex.entries.store');
 
-Route::get('/meets/{meet}/athletes', [MeetAthleteController::class, 'index'])
-    ->name('meets.athletes.index');
-
 Route::delete('/meets/{meet}/entries', [ParaMeetController::class, 'destroyEntries'])
     ->name('meets.entries.destroy');
+
+Route::get('/meets/{meet}/athletes', [MeetAthleteController::class, 'index'])
+    ->name('meets.athletes.index');
 
 Route::get('/meets/{meet}/athletes/create', [MeetAthleteController::class, 'create'])
     ->name('meets.athletes.create');
