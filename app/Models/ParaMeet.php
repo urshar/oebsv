@@ -50,4 +50,9 @@ class ParaMeet extends Model
         return $this->hasMany(ParaEntry::class, 'para_meet_id');
     }
 
+    public function results(): HasMany
+    {
+        return $this->hasMany(ParaResult::class, 'para_meet_id');
+    }
+
 }

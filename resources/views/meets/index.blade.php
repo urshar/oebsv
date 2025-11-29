@@ -29,7 +29,7 @@
                     <tr>
                         <td>{{ $meet->name }}</td>
                         <td>{{ $meet->city }}</td>
-                        <td>{{ optional($meet->nation)->code }}</td>
+                        <td>{{ optional($meet->nation)->ioc }}</td>
                         <td>{{ optional($meet->from_date)?->format('d.m.Y') }}</td>
                         <td>{{ optional($meet->to_date)?->format('d.m.Y') }}</td>
                         <td class="text-end">

@@ -219,5 +219,16 @@ class MeetAthleteController extends Controller
         return Carbon::now();
     }
 
+    public function results(ParaMeet $meet, ParaAthlete $athlete)
+    {
+        $entries = $athlete->entries()
+            ->where('para_meet_id', $meet->id)
+            ->with([
+                'event.swimstyle',
+                'results.splits',
+            ])
+            ->get();
 
+        return view('meets.athletes.results', compact('meet', 'athlete', 'entries'));
+    }
 }

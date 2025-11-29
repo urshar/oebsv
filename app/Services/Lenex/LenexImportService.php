@@ -91,6 +91,19 @@ class LenexImportService
         throw new RuntimeException("Nicht unterstützte LENEX-Erweiterung: {$ext}");
     }
 
+    public function loadLenexRootFromPath(string $path): SimpleXMLElement
+    {
+        $xmlString = $this->readLenexXml($path);
+        $root = simplexml_load_string($xmlString);
+
+        if (!$root instanceof SimpleXMLElement) {
+            throw new RuntimeException('LENEX XML konnte nicht geparst werden.');
+        }
+
+        return $root;
+    }
+
+
     /**
      * Meeting-Struktur (MEET, SESSIONS, EVENTS, AGEGROUPS) importieren.
      */

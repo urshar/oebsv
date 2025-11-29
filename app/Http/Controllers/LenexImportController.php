@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\ParaMeet;
 use App\Services\Lenex\LenexImportService;
+use App\Services\Lenex\LenexResultImporter;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
@@ -134,4 +135,38 @@ class LenexImportController extends Controller
         // absoluter Pfad, abhängig von deinem Filesystem-Disk
         return Storage::path($relativePath);
     }
+
+    /**
+     * Formular zum Hochladen einer Lenex-Resultdatei für ein bestimmtes Meeting.
+     */
+    public function createResults(ParaMeet $meet)
+    {
+        return view('lenex.results-upload', compact('meet'));
+    }
+    /**
+     * Verarbeitet den Upload der Lenex-Resultdatei und importiert die Resultate.
+     */
+
+    public function storeResults(Request $request, ParaMeet $meet, LenexResultImporter $importer): RedirectResponse
+    {
+        $file     = $this->validateLenexFile($request);
+        $fullPath = $this->storeUploadedFile($file);
+
+        try {
+            $importer->import($fullPath, $meet);
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()
+                ->withInput()
+                ->withErrors([
+                    'lenex_file' => 'Import failed: ' . $e->getMessage(),
+                ]);
+        }
+
+        return redirect()
+            ->route('meets.results', $meet)
+            ->with('status', 'Resultate wurden aus der Lenex-Datei importiert.');
+    }
+
 }

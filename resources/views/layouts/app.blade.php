@@ -54,6 +54,7 @@
                class="text-white text-decoration-none {{ request()->is('classifiers*') ? 'fw-bold text-decoration-underline' : '' }}">
                 Klassifier
             </a>
+
         </nav>
     </div>
 </header>

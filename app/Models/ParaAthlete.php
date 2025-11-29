@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 class ParaAthlete extends Model
 {
@@ -128,6 +129,17 @@ class ParaAthlete extends Model
         }
     }
 
+    public function results(): HasManyThrough
+    {
+        return $this->hasManyThrough(
+            ParaResult::class,
+            ParaEntry::class,
+            'para_athlete_id', // FK in entries
+            'para_entry_id',   // FK in results
+            'id',
+            'id'
+        );
+    }
 
     // Später: Meldungen / Ergebnisse-Relationen (entries, results) kannst du hier anhängen.
 }

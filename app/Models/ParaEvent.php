@@ -69,7 +69,7 @@ class ParaEvent extends Model
         return (bool) ($this->swimstyle?->is_relay);
     }
 
-    public function entries(): HasMany|ParaEvent
+    public function entries(): HasMany
     {
         return $this->hasMany(ParaEntry::class, 'para_event_id');
     }

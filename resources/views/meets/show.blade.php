@@ -23,6 +23,12 @@
             <a href="{{ route('meets.athletes.index', $meet) }}" class="btn btn-outline-primary btn-sm">
                 Athleten & Meldungen
             </a>
+            <a href="{{ route('lenex.results.form', $meet) }}" class="btn btn-outline-primary btn-sm">
+                Resultate importieren (Lenex)
+            </a>
+            <a href="{{ route('meets.results', $meet) }}" class="btn btn-primary btn-sm">
+                Ergebnisse anzeigen
+            </a>
 
             {{-- Alle Entries löschen --}}
             <form action="{{ route('meets.entries.destroy', $meet) }}"

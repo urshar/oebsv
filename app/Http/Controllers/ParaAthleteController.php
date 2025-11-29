@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Nation;
 use App\Models\ParaAthlete;
 use App\Models\ParaClub;
+use App\Models\ParaResult;
 use Illuminate\Http\Request;
 
 class ParaAthleteController extends Controller
@@ -103,5 +104,32 @@ class ParaAthleteController extends Controller
         return redirect()
             ->route('athletes.index')
             ->with('status', 'Athlet gelöscht.');
+    }
+
+    public function bestTimes(ParaAthlete $athlete)
+    {
+        // SCM
+        $bestScm = ParaResult::query()
+            ->whereHas('entry', function ($q) use ($athlete) {
+                $q->where('para_athlete_id', $athlete->id)
+                    ->whereHas('meet', fn($qm) => $qm->where('course', 'SCM'));
+            })
+            ->with(['entry.event.swimstyle'])
+            ->selectRaw('MIN(time_ms) as best_time_ms, para_entry_id')
+            ->groupBy('para_entry_id') // ggf. auf swimstyle_id gruppieren, wenn vorhanden
+            ->get();
+
+        // LCM
+        $bestLcm = ParaResult::query()
+            ->whereHas('entry', function ($q) use ($athlete) {
+                $q->where('para_athlete_id', $athlete->id)
+                    ->whereHas('meet', fn($qm) => $qm->where('course', 'LCM'));
+            })
+            ->with(['entry.event.swimstyle'])
+            ->selectRaw('MIN(time_ms) as best_time_ms, para_entry_id')
+            ->groupBy('para_entry_id')
+            ->get();
+
+        return view('athletes.best-times', compact('athlete', 'bestScm', 'bestLcm'));
     }
 }

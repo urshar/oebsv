@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ParaEntry;
 use App\Models\ParaMeet;
 use App\Models\Continent;
+use App\Models\ParaResult;
 use Illuminate\Http\Request;
 
 class ParaMeetController extends Controller
@@ -90,5 +91,26 @@ class ParaMeetController extends Controller
         return redirect()
             ->route('meets.show', $meet)
             ->with('status', 'Alle Meldungen für dieses Meeting wurden gelöscht.');
+    }
+
+    /**
+     * Zeigt alle Resultate eines Meetings.
+     */
+    public function results(ParaMeet $meet)
+    {
+        // Alle Results dieses Meetings inkl. Athlet, Event, Swimstyle, Splits
+        $results = ParaResult::where('para_meet_id', $meet->id)
+            ->with([
+                'entry.athlete',
+                'entry.event.swimstyle',
+                'splits',
+            ])
+            // Sortierung nach Event, Lauf, Bahn, Platz – nach Geschmack anpassen
+            ->orderBy('para_entry_id')
+            ->orderBy('heat')
+            ->orderBy('lane')
+            ->get();
+
+        return view('meets.results', compact('meet', 'results'));
     }
 }

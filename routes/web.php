@@ -33,6 +33,9 @@ Route::post('/lenex/upload', [LenexImportController::class, 'store'])
 // Meetings main
 Route::resource('meets', ParaMeetController::class);
 
+Route::get('/meets/{meet}/results', [ParaMeetController::class, 'results'])
+    ->name('meets.results');
+
 // Nested structure (shallow so edit URLs are short)
 Route::resource('meets.sessions', ParaSessionController::class)->shallow();
 Route::resource('sessions.events', ParaEventController::class)->shallow();
@@ -69,3 +72,21 @@ Route::resource('athletes', ParaAthleteController::class);
 Route::resource('athletes.classifications', ParaAthleteClassificationController::class)->shallow();
 
 Route::resource('classifiers', ParaClassifierController::class);
+
+Route::get('/meets/{meet}/lenex/results', [LenexImportController::class, 'createResults'])
+    ->name('lenex.results.form');
+
+Route::post('/meets/{meet}/lenex/results', [LenexImportController::class, 'storeResults'])
+    ->name('lenex.results.store');
+
+Route::get('/meets/{meet}/athletes/{athlete}/results', [MeetAthleteController::class, 'results'])
+    ->name('meets.athletes.results');
+
+Route::get('/athletes/{athlete}/best-times', [ParaAthleteController::class, 'bestTimes'])
+    ->name('athletes.best-times');
+
+Route::get('/meets/{meet}/lenex/results', [LenexImportController::class, 'createResults'])
+    ->name('lenex.results.form');
+
+Route::post('/meets/{meet}/lenex/results', [LenexImportController::class, 'storeResults'])
+    ->name('lenex.results.store');
