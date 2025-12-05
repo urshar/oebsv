@@ -160,7 +160,7 @@ class LenexResultImporter
                                 'lenex_eventid'          => $lenexEventId,
 
                                 'entry_time'             => (string) ($resultNode['entrytime'] ?? null),
-                                'entry_time_ms'          => $this->lenexTimeToMs(
+                                'entry_time_ms' => $this->lenexImportService->parseTimeToMs(
                                     (string) ($resultNode['entrytime'] ?? '')
                                 ),
                                 'course'                 => (string) ($resultNode['entrycourse'] ?? null),
@@ -183,7 +183,7 @@ class LenexResultImporter
                             ? $rankingByResultId[$resultId]
                             : null;
 
-                        $timeMs = $this->lenexTimeToMs(
+                        $timeMs = $this->lenexImportService->parseTimeToMs(
                             (string) ($resultNode['swimtime'] ?? '')
                         );
 
@@ -215,7 +215,7 @@ class LenexResultImporter
                                 ParaSplit::create([
                                     'para_result_id' => $result->id,
                                     'distance'       => (int) ($splitNode['distance'] ?? 0),
-                                    'time_ms'        => $this->lenexTimeToMs(
+                                    'time_ms'        => $this->lenexImportService->parseTimeToMs(
                                         (string) ($splitNode['swimtime'] ?? '')
                                     ),
                                 ]);
@@ -227,26 +227,4 @@ class LenexResultImporter
         });
     }
 
-    /**
-     * Zeit-String (HH:MM:SS.cc / MM:SS.cc) → Millisekunden.
-     */
-    protected function lenexTimeToMs(?string $time): ?int
-    {
-        if (! $time) {
-            return null;
-        }
-
-        $time = trim($time);
-
-        if (! preg_match('/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/', $time, $m)) {
-            return null;
-        }
-
-        $hours   = isset($m[1]) && $m[1] !== '' ? (int) $m[1] : 0;
-        $minutes = (int) $m[2];
-        $seconds = (int) $m[3];
-        $ms      = isset($m[4]) && $m[4] !== '' ? (int) str_pad($m[4], 3, '0') : 0;
-
-        return (($hours * 3600) + ($minutes * 60) + $seconds) * 1000 + $ms;
-    }
 }

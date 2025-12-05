@@ -7,6 +7,8 @@ use App\Http\Controllers\ParaClassifierController;
 use App\Http\Controllers\ParaEventAgegroupController;
 use App\Http\Controllers\ParaEventController;
 use App\Http\Controllers\ParaMeetController;
+use App\Http\Controllers\ParaRecordImportCandidateController;
+use App\Http\Controllers\ParaRecordImportController;
 use App\Http\Controllers\ParaSessionController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ContinentController;
@@ -102,4 +104,26 @@ Route::post('/meets/{meet}/lenex/results/preview', [LenexImportController::class
 // Schritt 2: Auswahl importieren
 Route::post('/meets/{meet}/lenex/results/import', [LenexImportController::class, 'importResults'])
     ->name('lenex.results.import');
+
+Route::get('/para-records/import', [ParaRecordImportController::class, 'create'])
+    ->name('para-records.import.create');
+
+Route::post('/para-records/import', [ParaRecordImportController::class, 'store'])
+    ->name('para-records.import.store');
+
+Route::get('/para-records', [ParaRecordImportController::class, 'index'])
+    ->name('para-records.index');
+
+Route::prefix('para-records/import-candidates')
+    ->name('para-records.import-candidates.')
+    ->group(function () {
+        Route::get('/', [ParaRecordImportCandidateController::class, 'index'])
+            ->name('index');
+
+        Route::get('{candidate}', [ParaRecordImportCandidateController::class, 'edit'])
+            ->name('edit');
+
+        Route::post('{candidate}', [ParaRecordImportCandidateController::class, 'update'])
+            ->name('update');
+    });
 

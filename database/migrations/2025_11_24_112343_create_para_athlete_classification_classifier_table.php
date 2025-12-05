@@ -9,6 +9,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('para_athlete_classification_classifier', function (Blueprint $table) {
+            $table->charset('utf8mb4');
+            $table->collation('utf8mb4_unicode_ci');
+
             $table->id();
 
             $table->foreignId('para_athlete_classification_id')

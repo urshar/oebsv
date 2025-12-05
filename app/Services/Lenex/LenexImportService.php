@@ -12,6 +12,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use SimpleXMLElement;
+use Throwable;
 use ZipArchive;
 
 class LenexImportService
@@ -26,6 +27,7 @@ class LenexImportService
 
     /**
      * Einstiegspunkt: Meeting-Struktur aus Datei importieren.
+     * @throws Throwable
      */
     public function importMeetStructureFromPath(string $path): ParaMeet
     {
@@ -250,7 +252,7 @@ class LenexImportService
     /**
      * Zeit-String (HH:MM:SS.cc / MM:SS.cc) → Millisekunden.
      */
-    protected function parseTimeToMs(?string $time): ?int
+    public function parseTimeToMs(?string $time): ?int
     {
         if (!$time) {
             return null;

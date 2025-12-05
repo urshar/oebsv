@@ -54,6 +54,10 @@
                class="text-white text-decoration-none {{ request()->is('classifiers*') ? 'fw-bold text-decoration-underline' : '' }}">
                 Klassifier
             </a>
+            <a href="{{ route('para-records.index') }}"
+               class="text-white text-decoration-none {{ request()->is('para-records*') ? 'fw-bold text-decoration-underline' : '' }}">
+                Records
+            </a>
 
         </nav>
     </div>
