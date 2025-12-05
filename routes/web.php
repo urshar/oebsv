@@ -90,3 +90,16 @@ Route::get('/meets/{meet}/lenex/results', [LenexImportController::class, 'create
 
 Route::post('/meets/{meet}/lenex/results', [LenexImportController::class, 'storeResults'])
     ->name('lenex.results.store');
+
+// Upload-Formular (wie bisher)
+Route::get('/meets/{meet}/lenex/results', [LenexImportController::class, 'createResults'])
+    ->name('lenex.results.form');
+
+// Schritt 1: Datei hochladen → Vorschau mit Auswahl
+Route::post('/meets/{meet}/lenex/results/preview', [LenexImportController::class, 'previewResults'])
+    ->name('lenex.results.preview');
+
+// Schritt 2: Auswahl importieren
+Route::post('/meets/{meet}/lenex/results/import', [LenexImportController::class, 'importResults'])
+    ->name('lenex.results.import');
+

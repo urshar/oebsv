@@ -93,19 +93,15 @@ class ParaMeetController extends Controller
             ->with('status', 'Alle Meldungen für dieses Meeting wurden gelöscht.');
     }
 
-    /**
-     * Zeigt alle Resultate eines Meetings.
-     */
     public function results(ParaMeet $meet)
     {
-        // Alle Results dieses Meetings inkl. Athlet, Event, Swimstyle, Splits
         $results = ParaResult::where('para_meet_id', $meet->id)
             ->with([
                 'entry.athlete',
+                'entry.club',
                 'entry.event.swimstyle',
                 'splits',
             ])
-            // Sortierung nach Event, Lauf, Bahn, Platz – nach Geschmack anpassen
             ->orderBy('para_entry_id')
             ->orderBy('heat')
             ->orderBy('lane')

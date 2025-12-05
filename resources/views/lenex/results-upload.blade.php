@@ -20,28 +20,29 @@
         @endif
 
         <form method="POST"
-              action="{{ route('lenex.results.store', $meet) }}"
+              action="{{ route('lenex.results.preview', $meet) }}"
               enctype="multipart/form-data">
             @csrf
 
             <div class="mb-3">
+                <label class="form-label">Lenex-Resultdatei (.xml/.lef/.lxf/.zip)</label>
                 <input type="file"
                        name="lenex_file"
                        class="form-control @error('lenex_file') is-invalid @enderror"
                        required>
-
                 @error('lenex_file')
                 <div class="invalid-feedback">{{ $message }}</div>
                 @enderror
             </div>
 
             <button type="submit" class="btn btn-primary">
-                Resultate importieren
+                Weiter zur Auswahl
             </button>
 
             <a href="{{ route('meets.show', $meet) }}" class="btn btn-secondary">
                 Abbrechen
             </a>
         </form>
+
     </div>
 @endsection

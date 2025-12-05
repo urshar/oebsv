@@ -9,7 +9,6 @@
 
 @extends('layouts.app')
 
-
 @section('content')
     <div class="container">
         <h1>Ergebnisse – {{ $meet->name }}</h1>
@@ -20,31 +19,36 @@
             </a>
         </p>
 
-        @if($results->isEmpty())
+        @if ($results->isEmpty())
             <div class="alert alert-info">
                 Für dieses Meeting sind noch keine Resultate vorhanden.
             </div>
         @else
             @php
                 /** @var Collection $grouped */
-                $grouped = $results->groupBy(function (ParaResult $result) {
-                    $event = $result->entry->event ?? null;
+                $grouped = $results->groupBy('entry.event.id');
+            @endphp
+
+            @foreach ($grouped as $eventId => $eventResults)
+                @php
+                    /** @var ParaResult|null $first */
+                    $first = $eventResults->first();
+                    $event = $first?->entry?->event;
                     $swim  = $event?->swimstyle;
 
-                    return sprintf(
+                    $eventLabel = sprintf(
                         '%s – %sm %s',
                         $event?->number ?? 'Event ?',
                         $swim?->distance ?? '?',
                         $swim?->stroke ?? ''
                     );
-                });
-            @endphp
+                @endphp
 
-            @foreach($grouped as $eventLabel => $eventResults)
                 <div class="card mb-4">
                     <div class="card-header">
                         <strong>{{ $eventLabel }}</strong>
                     </div>
+
                     <div class="card-body p-0">
                         <table class="table table-striped mb-0 table-sm">
                             <thead>
@@ -59,58 +63,55 @@
                             </tr>
                             </thead>
                             <tbody>
-                            @foreach($eventResults as $result)
+                            @foreach ($eventResults as $result)
                                 @php
-                                    $entry = $result->entry;
-
-                                    // Athlete: verschiedene mögliche Relationnamen abdecken
-                                    $athlete = $entry?->athlete ?? $entry?->paraAthlete ?? null;
-
-                                    // Club: erst beim Athleten, sonst direkt am Entry suchen
-                                    $club = $athlete?->paraClub
-                                        ?? $athlete?->club
-                                        ?? $entry?->club
-                                        ?? $entry?->paraClub
-                                        ?? null;
+                                    $entry   = $result->entry;
+                                    $athlete = $entry?->athlete;
+                                    $club    = $entry?->club;
                                 @endphp
+
                                 <tr>
                                     <td>{{ $result->heat ?? '-' }}</td>
                                     <td>{{ $result->lane ?? '-' }}</td>
                                     <td>{{ $result->rank ?? '-' }}</td>
                                     <td>
-                                        @if($athlete)
+                                        @if ($athlete)
                                             <a href="{{ route('athletes.show', $athlete) }}">
-                                                {{ trim(($athlete->lastname ?? '').', '.($athlete->firstname ?? '')) ?: '—' }}
+                                                {{ trim(($athlete->lastName ?? '').', '.($athlete->firstName ?? '')) ?: '—' }}
                                             </a>
                                         @else
                                             -
                                         @endif
                                     </td>
-                                    <td>{{ $club?->name ?? '-' }}</td>
+                                    <td>
+                                        @if ($club)
+                                            {{ $club->nameDe ?? '—' }}
+                                        @else
+                                            -
+                                        @endif
+                                    </td>
                                     <td>{{ $result->time_formatted ?? '-' }}</td>
                                     <td>
-                                        @if($result->status && $result->status !== 'OK')
+                                        @if ($result->status && $result->status !== 'OK')
                                             <span class="badge bg-danger">{{ $result->status }}</span>
                                         @endif
                                     </td>
                                 </tr>
 
-                                @if($result->splits->isNotEmpty())
+                                @if ($result->splits->isNotEmpty())
                                     <tr>
                                         <td colspan="7">
                                             <strong>Splits:</strong>
-                                            @foreach($result->splits as $split)
+                                            @foreach ($result->splits as $split)
                                                 <span class="me-3">
-                        {{ $split->distance }}m:
-                        {{-- hier könntest du dir auch ein Format à la mm:ss,cc bauen --}}
-                                                    {{ number_format($split->time_ms / 1000, 2, ',', '') }} s
-                    </span>
+                                                        {{ $split->distance }}m:
+                                                        {{ number_format($split->time_ms / 1000, 2, ',', '') }} s
+                                                    </span>
                                             @endforeach
                                         </td>
                                     </tr>
                                 @endif
                             @endforeach
-
                             </tbody>
                         </table>
                     </div>

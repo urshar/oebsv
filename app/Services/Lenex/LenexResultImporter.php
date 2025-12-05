@@ -10,6 +10,7 @@ use App\Models\ParaSplit;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use SimpleXMLElement;
+use Throwable;
 
 class LenexResultImporter
 {
@@ -22,8 +23,14 @@ class LenexResultImporter
 
     /**
      * Importiert Resultate für ein bestimmtes Meeting aus einer LENEX-Datei.
+     *
+     * @param  string  $filePath  Pfad zur Lenex-Datei
+     * @param  ParaMeet  $meet  Meeting, in das importiert wird
+     * @param  array<string>  $allowedAthleteIds  optionale Liste von LENEX-ATHLETEIDs,
+     *                                         nur diese Athleten werden importiert
+     * @throws Throwable
      */
-    public function import(string $filePath, ParaMeet $meet): void
+    public function import(string $filePath, ParaMeet $meet, ?array $allowedAthleteIds = null): void
     {
         // gleiche XML/LXF/ZIP-Logik wie Struktur/Entries
         $root = $this->lenexImportService->loadLenexRootFromPath($filePath);
@@ -89,7 +96,14 @@ class LenexResultImporter
             }
         }
 
-        DB::transaction(function () use ($meetNode, $meet, $eventByLenexId, $heatNumberById, $rankingByResultId) {
+        DB::transaction(function () use (
+            $meetNode,
+            $meet,
+            $eventByLenexId,
+            $heatNumberById,
+            $rankingByResultId,
+            $allowedAthleteIds
+        ) {
 
             foreach ($meetNode->CLUBS->CLUB ?? [] as $clubNode) {
 
@@ -103,6 +117,12 @@ class LenexResultImporter
 
                     $lenexAthleteId = (string) ($athNode['athleteid'] ?? '');
                     if ($lenexAthleteId === '') {
+                        continue;
+                    }
+
+                    // Filter: nur ausgewählte Athleten importieren, falls Liste übergeben wurde
+                    if ($allowedAthleteIds !== null
+                        && !in_array($lenexAthleteId, $allowedAthleteIds, true)) {
                         continue;
                     }
 

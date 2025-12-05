@@ -8,23 +8,20 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ParaEntry extends Model
 {
-
     protected $table = 'para_entries';
 
     protected $guarded = [];
 
-    protected $casts = [
-        'qualifying_date' => 'date',
-    ];
-
-    public function meet(): BelongsTo
+    public function athlete(): BelongsTo
     {
-        return $this->belongsTo(ParaMeet::class, 'para_meet_id');
+        // FK: para_athlete_id (laut Tinker gesetzt)
+        return $this->belongsTo(ParaAthlete::class, 'para_athlete_id');
     }
 
-    public function session(): BelongsTo
+    public function club(): BelongsTo
     {
-        return $this->belongsTo(ParaSession::class, 'para_session_id');
+        // FK: para_club_id (laut Tinker gesetzt)
+        return $this->belongsTo(ParaClub::class, 'para_club_id');
     }
 
     public function event(): BelongsTo
@@ -32,23 +29,30 @@ class ParaEntry extends Model
         return $this->belongsTo(ParaEvent::class, 'para_event_id');
     }
 
-    public function agegroup(): BelongsTo
+    public function session(): BelongsTo
     {
-        return $this->belongsTo(ParaEventAgegroup::class, 'para_event_agegroup_id');
+        return $this->belongsTo(ParaSession::class, 'para_session_id');
     }
 
-    public function athlete(): BelongsTo
+    public function meet(): BelongsTo
     {
-        return $this->belongsTo(ParaAthlete::class, 'para_athlete_id');
-    }
-
-    public function club(): BelongsTo
-    {
-        return $this->belongsTo(ParaClub::class, 'para_club_id');
+        return $this->belongsTo(ParaMeet::class, 'para_meet_id');
     }
 
     public function results(): HasMany
     {
         return $this->hasMany(ParaResult::class, 'para_entry_id');
+    }
+
+    // Falls irgendwo im Code bereits paraAthlete/paraClub verwendet wird,
+    // führen wir die einfach auf die neuen Relationen zurück:
+    public function paraAthlete(): BelongsTo
+    {
+        return $this->athlete();
+    }
+
+    public function paraClub(): BelongsTo
+    {
+        return $this->club();
     }
 }

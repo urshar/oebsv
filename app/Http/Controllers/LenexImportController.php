@@ -11,6 +11,8 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
+use RuntimeException;
+use SimpleXMLElement;
 use Throwable;
 
 class LenexImportController extends Controller
@@ -167,6 +169,106 @@ class LenexImportController extends Controller
         return redirect()
             ->route('meets.results', $meet)
             ->with('status', 'Resultate wurden aus der Lenex-Datei importiert.');
+    }
+
+    public function previewResults(Request $request, ParaMeet $meet)
+    {
+        // gleiche Validierung & Speicherung wie bei Struktur/Entries
+        $file     = $this->validateLenexFile($request);
+        $fullPath = $this->storeUploadedFile($file);
+
+        // XML einlesen über LenexImportService (nutzt .xml/.lef/.lxf/.zip)
+        $root = $this->lenexImportService->loadLenexRootFromPath($fullPath);
+
+        $meetNode = $root->MEETS->MEET[0] ?? null;
+        if (! $meetNode instanceof SimpleXMLElement) {
+            throw new RuntimeException('Keine MEET-Definition im LENEX (Results) gefunden.');
+        }
+
+        // Vereine + Schwimmer mit Ergebnissen einsammeln
+        $clubs = [];
+
+        foreach ($meetNode->CLUBS->CLUB ?? [] as $clubNode) {
+            $clubId   = (string)($clubNode['clubid'] ?? '');
+            $clubName = (string)($clubNode['name'] ?? '');
+            $nation   = (string)($clubNode['nation'] ?? '');
+
+            $athletes = [];
+
+            foreach ($clubNode->ATHLETES->ATHLETE ?? [] as $athNode) {
+                // nur Athleten mit RESULTs anzeigen
+                if (!isset($athNode->RESULTS->RESULT)) {
+                    continue;
+                }
+
+                $lenexAthleteId = (string)($athNode['athleteid'] ?? '');
+                if ($lenexAthleteId === '') {
+                    continue;
+                }
+
+                $firstName = (string)($athNode['firstname'] ?? $athNode['givenname'] ?? '');
+                $lastName  = (string)($athNode['lastname'] ?? $athNode['familyname'] ?? '');
+                $license   = (string)($athNode['license'] ?? '');
+
+                $athletes[] = [
+                    'lenex_athlete_id' => $lenexAthleteId,
+                    'first_name'       => $firstName,
+                    'last_name'        => $lastName,
+                    'license'          => $license,
+                ];
+            }
+
+            if (!empty($athletes)) {
+                $clubs[] = [
+                    'club_id'   => $clubId,
+                    'club_name' => $clubName,
+                    'nation'    => $nation,
+                    'athletes'  => $athletes,
+                ];
+            }
+        }
+
+        // Datei-Pfad im Hidden-Feld an die zweite Stufe weitergeben
+        $lenexFilePath = $fullPath;
+
+        return view('lenex.results-preview', compact('meet', 'clubs', 'lenexFilePath'));
+    }
+
+    public function importResults(
+        Request $request,
+        ParaMeet $meet,
+        LenexResultImporter $importer
+    ) {
+        $data = $request->validate([
+            'lenex_file_path'       => ['required', 'string'],
+            'selected_athletes'     => ['array'],
+            'selected_athletes.*'   => ['string'],
+        ]);
+
+        $filePath = $data['lenex_file_path'];
+
+        if (! is_file($filePath)) {
+            return back()
+                ->withErrors(['lenex_file_path' => 'Die Lenex-Datei konnte nicht mehr gefunden werden.'])
+                ->withInput();
+        }
+
+        $selectedAthletes = $data['selected_athletes'] ?? [];
+
+        try {
+            // Nur ausgewählte Athleten importieren
+            $importer->import($filePath, $meet, $selectedAthletes);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return back()
+                ->withErrors(['lenex_file_path' => 'Import failed: '.$e->getMessage()])
+                ->withInput();
+        }
+
+        return redirect()
+            ->route('meets.results', $meet)
+            ->with('status', 'Resultate wurden importiert.');
     }
 
 }
