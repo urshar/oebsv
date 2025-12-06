@@ -18,6 +18,8 @@ class DatabaseSeeder extends Seeder
         $this->call([
             ContinentSeeder::class,
             SwimstyleSeeder::class,
+            NationSeeder::class,
+            SubregionSeeder::class,
         ]);
 
         // User::factory(10)->create();

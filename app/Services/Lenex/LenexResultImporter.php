@@ -2,6 +2,8 @@
 
 namespace App\Services\Lenex;
 
+use App\Models\ParaAthlete;
+use App\Models\ParaClub;
 use App\Models\ParaEntry;
 use App\Models\ParaEvent;
 use App\Models\ParaMeet;
@@ -16,27 +18,36 @@ class LenexResultImporter
 {
     public function __construct(
         protected LenexImportService $lenexImportService,
-        protected NationResolver     $nationResolver,
-        protected ClubResolver       $clubResolver,
-        protected AthleteResolver    $athleteResolver,
-    ) {}
+        protected NationResolver $nationResolver,
+        protected ClubResolver $clubResolver,
+        protected AthleteResolver $athleteResolver,
+    ) {
+    }
 
     /**
      * Importiert Resultate für ein bestimmtes Meeting aus einer LENEX-Datei.
      *
      * @param  string  $filePath  Pfad zur Lenex-Datei
      * @param  ParaMeet  $meet  Meeting, in das importiert wird
-     * @param  array<string>  $allowedAthleteIds  optionale Liste von LENEX-ATHLETEIDs,
-     *                                         nur diese Athleten werden importiert
+     * @param  array<string>|null  $allowedAthleteIds  optionale Liste von LENEX-ATHLETEIDs,
+     *                                                nur diese Athleten werden importiert
+     * @param  array<string,int>  $clubMapping  Mapping clubKey ("IOC|Name") → para_clubs.id
+     * @param  array<string,int>  $athleteMapping  Mapping lenexAthleteId → para_athletes.id
+     *
      * @throws Throwable
      */
-    public function import(string $filePath, ParaMeet $meet, ?array $allowedAthleteIds = null): void
-    {
+    public function import(
+        string $filePath,
+        ParaMeet $meet,
+        ?array $allowedAthleteIds = null,
+        array $clubMapping = [],
+        array $athleteMapping = [],
+    ): void {
         // gleiche XML/LXF/ZIP-Logik wie Struktur/Entries
         $root = $this->lenexImportService->loadLenexRootFromPath($filePath);
 
         $meetNode = $root->MEETS->MEET[0] ?? null;
-        if (! $meetNode instanceof SimpleXMLElement) {
+        if (!$meetNode instanceof SimpleXMLElement) {
             throw new RuntimeException('Keine MEET-Definition im LENEX (Results) gefunden.');
         }
 
@@ -83,7 +94,7 @@ class LenexResultImporter
                             : null;
 
                         // pro Result nur das Ranking mit kleinstem order (meist "offiziell")
-                        if (! isset($rankingByResultId[$resultId]) ||
+                        if (!isset($rankingByResultId[$resultId]) ||
                             $order < $rankingByResultId[$resultId]['order']) {
 
                             $rankingByResultId[$resultId] = [
@@ -102,16 +113,25 @@ class LenexResultImporter
             $eventByLenexId,
             $heatNumberById,
             $rankingByResultId,
-            $allowedAthleteIds
+            $allowedAthleteIds,
+            $clubMapping,
+            $athleteMapping,
         ) {
-
             foreach ($meetNode->CLUBS->CLUB ?? [] as $clubNode) {
 
                 $nationCode = (string) ($clubNode['nation'] ?? '');
-                $nation     = $nationCode !== '' ? $this->nationResolver->fromLenexCode($nationCode) : null;
+                $nation = $nationCode !== ''
+                    ? $this->nationResolver->fromLenexCode($nationCode)
+                    : null;
 
-                // Verein wie beim Entries-Import auflösen
-                $club = $this->clubResolver->resolveFromLenex($clubNode);
+                $clubName = (string) ($clubNode['name'] ?? '');
+                // clubKey muss mit deinem Controller/Blade übereinstimmen
+                $clubKey = $nationCode.'|'.$clubName;
+
+                // Verein erst anlegen/holen, wenn klar ist,
+                // dass mindestens ein Athlet dieses Clubs importiert wird
+                /** @var ParaClub|null $club */
+                $club = null;
 
                 foreach ($clubNode->ATHLETES->ATHLETE ?? [] as $athNode) {
 
@@ -126,17 +146,43 @@ class LenexResultImporter
                         continue;
                     }
 
-                    // Athlet via Resolver (Name, Lizenz, Nation, usw.)
-                    $athlete = $this->athleteResolver->resolveFromLenex(
-                        $athNode,
-                        $club,
-                        $nation
-                    );
+                    // ab hier wissen wir: dieser Athlet soll importiert werden
+                    // → Verein auflösen (Mapping → bestehender Club oder neu)
+                    if ($club === null) {
+                        $mappedClubId = $clubMapping[$clubKey] ?? null;
+
+                        if ($mappedClubId) {
+                            $club = ParaClub::find($mappedClubId);
+                        }
+
+                        if (!$club) {
+                            // Fallback: normaler Resolver (legt ggf. neuen Verein an)
+                            $club = $this->clubResolver->resolveFromLenex($clubNode);
+                        }
+                    }
+
+                    // Athlet-mapping: ggf. auf bestehenden Athleten zeigen
+                    $mappedAthleteId = $athleteMapping[$lenexAthleteId] ?? null;
+
+                    if ($mappedAthleteId) {
+                        $athlete = ParaAthlete::find($mappedAthleteId);
+                    } else {
+                        $athlete = null;
+                    }
+
+                    if (!$athlete) {
+                        // Fallback: normaler Resolver (legt neuen Athleten an oder matched nach deiner Logik)
+                        $athlete = $this->athleteResolver->resolveFromLenex(
+                            $athNode,
+                            $club,
+                            $nation
+                        );
+                    }
 
                     foreach ($athNode->RESULTS->RESULT ?? [] as $resultNode) {
 
                         $lenexEventId = (string) ($resultNode['eventid'] ?? '');
-                        if ($lenexEventId === '' || ! isset($eventByLenexId[$lenexEventId])) {
+                        if ($lenexEventId === '' || !isset($eventByLenexId[$lenexEventId])) {
                             // kein passendes Event in diesem Meet
                             continue;
                         }
@@ -147,33 +193,33 @@ class LenexResultImporter
                         // ENTRY suchen oder neu anlegen (pro Athlet+Event+Meet)
                         $entry = ParaEntry::firstOrCreate(
                             [
-                                'para_event_id'   => $eventModel->id,
+                                'para_event_id' => $eventModel->id,
                                 'para_athlete_id' => $athlete->id,
                             ],
                             [
-                                'para_meet_id'           => $meet->id,
-                                'para_session_id'        => $eventModel->para_session_id,
+                                'para_meet_id' => $meet->id,
+                                'para_session_id' => $eventModel->para_session_id,
                                 'para_event_agegroup_id' => null, // kann später gesetzt werden
-                                'para_club_id'           => $club->id,
+                                'para_club_id' => $club->id,
 
-                                'lenex_athleteid'        => $lenexAthleteId,
-                                'lenex_eventid'          => $lenexEventId,
+                                'lenex_athleteid' => $lenexAthleteId,
+                                'lenex_eventid' => $lenexEventId,
 
-                                'entry_time'             => (string) ($resultNode['entrytime'] ?? null),
+                                'entry_time' => (string) ($resultNode['entrytime'] ?? null),
                                 'entry_time_ms' => $this->lenexImportService->parseTimeToMs(
                                     (string) ($resultNode['entrytime'] ?? '')
                                 ),
-                                'course'                 => (string) ($resultNode['entrycourse'] ?? null),
+                                'course' => (string) ($resultNode['entrycourse'] ?? null),
 
-                                'qualifying_date'        => null,
-                                'qualifying_meet_name'   => null,
-                                'qualifying_city'        => null,
-                                'qualifying_nation'      => null,
+                                'qualifying_date' => null,
+                                'qualifying_meet_name' => null,
+                                'qualifying_city' => null,
+                                'qualifying_nation' => null,
                             ]
                         );
 
                         $resultId = (string) ($resultNode['resultid'] ?? '');
-                        $heatId   = (string) ($resultNode['heatid'] ?? '');
+                        $heatId = (string) ($resultNode['heatid'] ?? '');
 
                         $heatNumber = isset($heatNumberById[$heatId])
                             ? $heatNumberById[$heatId]
@@ -190,17 +236,19 @@ class LenexResultImporter
                         $result = ParaResult::updateOrCreate(
                             [
                                 'para_entry_id' => $entry->id,
-                                'para_meet_id'  => $meet->id,
+                                'para_meet_id' => $meet->id,
                             ],
                             [
-                                'time_ms'          => $timeMs,
+                                'time_ms' => $timeMs,
                                 'reaction_time_ms' => null,
-                                'rank'             => $rankInfo['place'] ?? null,
-                                'heat'             => $heatNumber,
-                                'lane'             => isset($resultNode['lane']) ? (int) $resultNode['lane'] : null,
-                                'round'            => null,
-                                'status'           => (string) ($resultNode['status'] ?? 'OK'),
-                                'points'           => isset($resultNode['points'])
+                                'rank' => $rankInfo['place'] ?? null,
+                                'heat' => $heatNumber,
+                                'lane' => isset($resultNode['lane'])
+                                    ? (int) $resultNode['lane']
+                                    : null,
+                                'round' => null,
+                                'status' => (string) ($resultNode['status'] ?? 'OK'),
+                                'points' => isset($resultNode['points'])
                                     ? (int) $resultNode['points']
                                     : null,
                             ]
@@ -214,8 +262,8 @@ class LenexResultImporter
                             foreach ($splitsNode->SPLIT ?? [] as $splitNode) {
                                 ParaSplit::create([
                                     'para_result_id' => $result->id,
-                                    'distance'       => (int) ($splitNode['distance'] ?? 0),
-                                    'time_ms'        => $this->lenexImportService->parseTimeToMs(
+                                    'distance' => (int) ($splitNode['distance'] ?? 0),
+                                    'time_ms' => $this->lenexImportService->parseTimeToMs(
                                         (string) ($splitNode['swimtime'] ?? '')
                                     ),
                                 ]);
@@ -226,5 +274,4 @@ class LenexResultImporter
             }
         });
     }
-
 }

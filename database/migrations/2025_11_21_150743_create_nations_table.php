@@ -4,8 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     /**
      * Run the migrations.
      */
@@ -45,7 +44,7 @@ return new class extends Migration
                 ->nullOnDelete();
 
             // Codes (fixed length + unique)
-            $table->char('ioc', 3)->nullable()->unique();   // IOC code (AUT, GER, ...)
+            $table->string('ioc', 3)->nullable()->unique();   // IOC code (AUT, GER, ...)
             $table->char('iso2', 2)->nullable()->unique();  // 2-letter ISO
             $table->char('iso3', 3)->nullable()->unique();  // 3-letter ISO
 

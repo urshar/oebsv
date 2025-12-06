@@ -2,11 +2,11 @@
 
 namespace App\Services\Lenex;
 
-use App\Models\ParaMeet;
-use App\Models\ParaSession;
+use App\Models\ParaEntry;
 use App\Models\ParaEvent;
 use App\Models\ParaEventAgegroup;
-use App\Models\ParaEntry;
+use App\Models\ParaMeet;
+use App\Models\ParaSession;
 use App\Services\AgegroupResolver;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -18,12 +18,13 @@ use ZipArchive;
 class LenexImportService
 {
     public function __construct(
-        protected NationResolver     $nationResolver,
-        protected ClubResolver       $clubResolver,
-        protected AthleteResolver    $athleteResolver,
-        protected SwimstyleResolver  $swimstyleResolver,
-        protected AgegroupResolver   $agegroupResolver,
-    ) {}
+        protected NationResolver $nationResolver,
+        protected ClubResolver $clubResolver,
+        protected AthleteResolver $athleteResolver,
+        protected SwimstyleResolver $swimstyleResolver,
+        protected AgegroupResolver $agegroupResolver,
+    ) {
+    }
 
     /**
      * Einstiegspunkt: Meeting-Struktur aus Datei importieren.
@@ -72,7 +73,7 @@ class LenexImportService
 
             $xml = null;
             for ($i = 0; $i < $zip->numFiles; $i++) {
-                $name  = $zip->getNameIndex($i);
+                $name = $zip->getNameIndex($i);
                 $lower = strtolower($name);
 
                 if (str_ends_with($lower, '.lef') || str_ends_with($lower, '.xml')) {
@@ -92,19 +93,6 @@ class LenexImportService
 
         throw new RuntimeException("Nicht unterstützte LENEX-Erweiterung: {$ext}");
     }
-
-    public function loadLenexRootFromPath(string $path): SimpleXMLElement
-    {
-        $xmlString = $this->readLenexXml($path);
-        $root = simplexml_load_string($xmlString);
-
-        if (!$root instanceof SimpleXMLElement) {
-            throw new RuntimeException('LENEX XML konnte nicht geparst werden.');
-        }
-
-        return $root;
-    }
-
 
     /**
      * Meeting-Struktur (MEET, SESSIONS, EVENTS, AGEGROUPS) importieren.
@@ -128,33 +116,33 @@ class LenexImportService
         }
         sort($dates);
         $fromDate = $dates[0] ?? null;
-        $toDate   = $dates ? end($dates) : null;
+        $toDate = $dates ? end($dates) : null;
 
         $name = (string) $meetNode['name'];
         $city = (string) $meetNode['city'];
 
         // Hash zur Dublettenvermeidung (gleiche Veranstaltung)
-        $hash = sha1($name . '|' . $city . '|' . $fromDate . '|' . $toDate);
+        $hash = sha1($name.'|'.$city.'|'.$fromDate.'|'.$toDate);
 
         $meet = ParaMeet::updateOrCreate(
             ['meet_hash' => $hash],
             [
-                'name'              => $name,
-                'city'              => $city,
-                'nation_id'         => $nation?->id,
-                'from_date'         => $fromDate,
-                'to_date'           => $toDate,
-                'entry_start_date'  => (string) ($meetNode['entrystartdate'] ?? null),
-                'entry_deadline'    => (string) ($meetNode['deadline'] ?? null),
-                'withdraw_until'    => (string) ($meetNode['withdrawuntil'] ?? null),
-                'entry_type'        => (string) ($meetNode['entrytype'] ?? null),
-                'course'            => (string) ($meetNode['course'] ?? null),
-                'host_club'         => (string) ($meetNode['hostclub'] ?? null),
-                'organizer'         => (string) ($meetNode['organizer'] ?? null),
-                'organizer_url'     => (string) ($meetNode['organizer.url'] ?? null),
-                'result_url'        => (string) ($meetNode['result.url'] ?? null),
-                'lenex_revisiondate'=> (string) ($root['revisiondate'] ?? null),
-                'lenex_created'     => (string) ($root['created'] ?? null),
+                'name' => $name,
+                'city' => $city,
+                'nation_id' => $nation?->id,
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
+                'entry_start_date' => (string) ($meetNode['entrystartdate'] ?? null),
+                'entry_deadline' => (string) ($meetNode['deadline'] ?? null),
+                'withdraw_until' => (string) ($meetNode['withdrawuntil'] ?? null),
+                'entry_type' => (string) ($meetNode['entrytype'] ?? null),
+                'course' => (string) ($meetNode['course'] ?? null),
+                'host_club' => (string) ($meetNode['hostclub'] ?? null),
+                'organizer' => (string) ($meetNode['organizer'] ?? null),
+                'organizer_url' => (string) ($meetNode['organizer.url'] ?? null),
+                'result_url' => (string) ($meetNode['result.url'] ?? null),
+                'lenex_revisiondate' => (string) ($root['revisiondate'] ?? null),
+                'lenex_created' => (string) ($root['created'] ?? null),
             ]
         );
 
@@ -163,14 +151,14 @@ class LenexImportService
             $session = ParaSession::updateOrCreate(
                 [
                     'para_meet_id' => $meet->id,
-                    'number'       => (int) ($sessionNode['number'] ?? 0),
+                    'number' => (int) ($sessionNode['number'] ?? 0),
                 ],
                 [
-                    'date'               => (string) ($sessionNode['date'] ?? null),
-                    'start_time'         => (string) ($sessionNode['daytime'] ?? null),
-                    'warmup_from'        => (string) ($sessionNode['warmupfrom'] ?? null),
-                    'warmup_until'       => (string) ($sessionNode['warmupuntil'] ?? null),
-                    'official_meeting'   => (string) ($sessionNode['officialmeeting'] ?? null),
+                    'date' => (string) ($sessionNode['date'] ?? null),
+                    'start_time' => (string) ($sessionNode['daytime'] ?? null),
+                    'warmup_from' => (string) ($sessionNode['warmupfrom'] ?? null),
+                    'warmup_until' => (string) ($sessionNode['warmupuntil'] ?? null),
+                    'official_meeting' => (string) ($sessionNode['officialmeeting'] ?? null),
                     'teamleader_meeting' => (string) ($sessionNode['teamleadermeeting'] ?? null),
                 ]
             );
@@ -178,7 +166,7 @@ class LenexImportService
             // Events dieser Session
             foreach ($sessionNode->EVENTS->EVENT ?? [] as $eventNode) {
                 $swimstyleNode = $eventNode->SWIMSTYLE ?? null;
-                $feeNode       = $eventNode->FEE ?? null;
+                $feeNode = $eventNode->FEE ?? null;
 
                 $swimstyleModel = $this->swimstyleResolver->resolveFromLenex(
                     $swimstyleNode instanceof SimpleXMLElement ? $swimstyleNode : null
@@ -187,16 +175,16 @@ class LenexImportService
                 $event = ParaEvent::updateOrCreate(
                     [
                         'para_session_id' => $session->id,
-                        'lenex_eventid'   => (string) ($eventNode['eventid'] ?? null),
+                        'lenex_eventid' => (string) ($eventNode['eventid'] ?? null),
                     ],
                     [
-                        'number'       => (int) ($eventNode['number'] ?? 0),
-                        'order'        => (int) ($eventNode['order'] ?? 0),
-                        'round'        => (string) ($eventNode['round'] ?? null),
+                        'number' => (int) ($eventNode['number'] ?? 0),
+                        'order' => (int) ($eventNode['order'] ?? 0),
+                        'round' => (string) ($eventNode['round'] ?? null),
 
                         'swimstyle_id' => $swimstyleModel?->id,
 
-                        'fee'          => $this->parseFeeValue($feeNode),
+                        'fee' => $this->parseFeeValue($feeNode),
                         'fee_currency' => $feeNode ? (string) ($feeNode['currency'] ?? null) : null,
                     ]
                 );
@@ -206,13 +194,13 @@ class LenexImportService
 
                 foreach ($eventNode->AGEGROUPS->AGEGROUP ?? [] as $ageNode) {
                     ParaEventAgegroup::create([
-                        'para_event_id'    => $event->id,
+                        'para_event_id' => $event->id,
                         'lenex_agegroupid' => (string) ($ageNode['agegroupid'] ?? null),
-                        'name'             => (string) ($ageNode['name'] ?? ''),
-                        'gender'           => (string) ($ageNode['gender'] ?? null),
-                        'age_min'          => $this->parseIntOrNull($ageNode['agemin'] ?? null),
-                        'age_max'          => $this->parseIntOrNull($ageNode['agemax'] ?? null),
-                        'handicap_raw'     => (string) ($ageNode['handicap'] ?? null),
+                        'name' => (string) ($ageNode['name'] ?? ''),
+                        'gender' => (string) ($ageNode['gender'] ?? null),
+                        'age_min' => $this->parseIntOrNull($ageNode['agemin'] ?? null),
+                        'age_max' => $this->parseIntOrNull($ageNode['agemax'] ?? null),
+                        'handicap_raw' => (string) ($ageNode['handicap'] ?? null),
                     ]);
                 }
             }
@@ -249,27 +237,16 @@ class LenexImportService
         return (int) $value;
     }
 
-    /**
-     * Zeit-String (HH:MM:SS.cc / MM:SS.cc) → Millisekunden.
-     */
-    public function parseTimeToMs(?string $time): ?int
+    public function loadLenexRootFromPath(string $path): SimpleXMLElement
     {
-        if (!$time) {
-            return null;
+        $xmlString = $this->readLenexXml($path);
+        $root = simplexml_load_string($xmlString);
+
+        if (!$root instanceof SimpleXMLElement) {
+            throw new RuntimeException('LENEX XML konnte nicht geparst werden.');
         }
 
-        $time = trim($time);
-
-        if (!preg_match('/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/', $time, $m)) {
-            return null;
-        }
-
-        $hours   = isset($m[1]) && $m[1] !== '' ? (int) $m[1] : 0;
-        $minutes = (int) $m[2];
-        $seconds = (int) $m[3];
-        $ms      = isset($m[4]) && $m[4] !== '' ? (int) str_pad($m[4], 3, '0') : 0;
-
-        return (($hours * 3600) + ($minutes * 60) + $seconds) * 1000 + $ms;
+        return $root;
     }
 
     /**
@@ -290,7 +267,7 @@ class LenexImportService
         }
 
         // AGEDATE-Knoten (Stichtag für Altersberechnung)
-        $ageDateNode  = $meetNode->AGEDATE[0] ?? null;
+        $ageDateNode = $meetNode->AGEDATE[0] ?? null;
         $ageDateValue = $ageDateNode ? (string) ($ageDateNode['value'] ?? null) : null;
 
         // Sessions und Events des Meetings aus der DB laden
@@ -308,7 +285,7 @@ class LenexImportService
         foreach ($meetNode->SESSIONS->SESSION ?? [] as $sessionNode) {
             $sessionNumber = (int) ($sessionNode['number'] ?? 0);
             foreach ($sessionNode->EVENTS->EVENT ?? [] as $eventNode) {
-                $eventNumber          = (int) ($eventNode['number'] ?? 0);
+                $eventNumber = (int) ($eventNode['number'] ?? 0);
                 $lenexEventIdForEntry = (string) ($eventNode['eventid'] ?? '');
                 if ($lenexEventIdForEntry !== '') {
                     $entryEventMap[$lenexEventIdForEntry] = [$sessionNumber, $eventNumber];
@@ -320,7 +297,7 @@ class LenexImportService
         $eventBySessionAndNumber = [];
         foreach ($meet->sessions as $sessionModel) {
             foreach ($sessionModel->events as $eventModel) {
-                $eventBySessionAndNumber[$sessionModel->number . ':' . $eventModel->number] = $eventModel;
+                $eventBySessionAndNumber[$sessionModel->number.':'.$eventModel->number] = $eventModel;
             }
         }
 
@@ -357,7 +334,7 @@ class LenexImportService
                         continue;
                     }
 
-                    $eventModel = $eventBySessionAndNumber[$sessionNumber . ':' . $eventNumber] ?? null;
+                    $eventModel = $eventBySessionAndNumber[$sessionNumber.':'.$eventNumber] ?? null;
                     if (!$eventModel) {
                         continue;
                     }
@@ -379,37 +356,60 @@ class LenexImportService
 
                     // Entrytime
                     $entryTimeStr = (string) ($entryNode['entrytime'] ?? '');
-                    $entryTimeMs  = $this->parseTimeToMs($entryTimeStr);
+                    $entryTimeMs = $this->parseTimeToMs($entryTimeStr);
 
                     // MEETINFO (Quali-Wettkampf)
                     $mi = $entryNode->MEETINFO[0] ?? null;
 
                     ParaEntry::updateOrCreate(
                         [
-                            'para_event_id'   => $eventModel->id,
+                            'para_event_id' => $eventModel->id,
                             'para_athlete_id' => $athlete->id,
                         ],
                         [
-                            'para_meet_id'           => $meet->id,
-                            'para_session_id'        => $sessionModel->id,
+                            'para_meet_id' => $meet->id,
+                            'para_session_id' => $sessionModel->id,
                             'para_event_agegroup_id' => $agegroupModel?->id,
-                            'para_club_id'           => $club->id,
+                            'para_club_id' => $club->id,
 
-                            'lenex_athleteid'        => $lenexAthleteId !== '' ? $lenexAthleteId : null,
-                            'lenex_eventid'          => $lenexEntryEventId,
+                            'lenex_athleteid' => $lenexAthleteId !== '' ? $lenexAthleteId : null,
+                            'lenex_eventid' => $lenexEntryEventId,
 
-                            'entry_time'             => $entryTimeStr ?: null,
-                            'entry_time_ms'          => $entryTimeMs,
+                            'entry_time' => $entryTimeStr ?: null,
+                            'entry_time_ms' => $entryTimeMs,
 
-                            'course'                 => $mi ? (string) ($mi['course'] ?? null) : null,
-                            'qualifying_date'        => $mi ? (string) ($mi['date'] ?? null) : null,
-                            'qualifying_meet_name'   => $mi ? (string) ($mi['name'] ?? null) : null,
-                            'qualifying_city'        => $mi ? (string) ($mi['city'] ?? null) : null,
-                            'qualifying_nation'      => $mi ? (string) ($mi['nation'] ?? null) : null,
+                            'course' => $mi ? (string) ($mi['course'] ?? null) : null,
+                            'qualifying_date' => $mi ? (string) ($mi['date'] ?? null) : null,
+                            'qualifying_meet_name' => $mi ? (string) ($mi['name'] ?? null) : null,
+                            'qualifying_city' => $mi ? (string) ($mi['city'] ?? null) : null,
+                            'qualifying_nation' => $mi ? (string) ($mi['nation'] ?? null) : null,
                         ]
                     );
                 }
             }
         }
+    }
+
+    /**
+     * Zeit-String (HH:MM:SS.cc / MM:SS.cc) → Millisekunden.
+     */
+    public function parseTimeToMs(?string $time): ?int
+    {
+        if (!$time) {
+            return null;
+        }
+
+        $time = trim($time);
+
+        if (!preg_match('/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/', $time, $m)) {
+            return null;
+        }
+
+        $hours = isset($m[1]) && $m[1] !== '' ? (int) $m[1] : 0;
+        $minutes = (int) $m[2];
+        $seconds = (int) $m[3];
+        $ms = isset($m[4]) && $m[4] !== '' ? (int) str_pad($m[4], 3, '0') : 0;
+
+        return (($hours * 3600) + ($minutes * 60) + $seconds) * 1000 + $ms;
     }
 }
