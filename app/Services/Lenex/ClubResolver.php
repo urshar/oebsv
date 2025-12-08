@@ -2,15 +2,16 @@
 
 namespace App\Services\Lenex;
 
-use App\Models\ParaClub;
 use App\Models\Nation;
+use App\Models\ParaClub;
 use SimpleXMLElement;
 
 class ClubResolver
 {
     public function __construct(
         protected NationResolver $nationResolver,
-    ) {}
+    ) {
+    }
 
     /**
      * Findet oder erstellt einen ParaClub aus einem LENEX-<CLUB>-Knoten.
@@ -19,7 +20,7 @@ class ClubResolver
      * - @swrid (optional)
      * - @code  (optional, Verbands-Code)
      * - @nation (IOC/ISO3, z.B. AUT)
-     * - @name  (Clubname)
+     * - @name  (ParaClub)
      */
     public function resolveFromLenex(SimpleXMLElement $clubNode): ParaClub
     {
@@ -27,8 +28,8 @@ class ClubResolver
         $nationId = $nation?->id;
 
         $swrid = trim((string) ($clubNode['swrid'] ?? ''));
-        $code  = trim((string) ($clubNode['code'] ?? ''));
-        $name  = trim((string) $clubNode['name']);
+        $code = trim((string) ($clubNode['code'] ?? ''));
+        $name = trim((string) $clubNode['name']);
 
         // 1. nach swrid suchen
         if ($swrid !== '') {
@@ -62,9 +63,9 @@ class ClubResolver
 
         // 4. neu anlegen
         return ParaClub::create([
-            'swrid'     => $swrid !== '' ? $swrid : null,
-            'clubCode'  => $code !== '' ? $code : null,
-            'nameDe'    => $name,
+            'swrid' => $swrid !== '' ? $swrid : null,
+            'clubCode' => $code !== '' ? $code : null,
+            'nameDe' => $name,
             // nameEn kannst du bei Bedarf später setzen / übersetzen
             'nation_id' => $nationId,
         ]);
@@ -104,8 +105,8 @@ class ClubResolver
 
         // 3. neu anlegen
         return ParaClub::create([
-            'nameDe'    => $nameDe,
-            'clubCode'  => $clubCode,
+            'nameDe' => $nameDe,
+            'clubCode' => $clubCode,
             'nation_id' => $nationId,
         ]);
     }

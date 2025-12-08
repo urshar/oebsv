@@ -2,28 +2,33 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * @property int|null $id
+ * @property string|null $lsvCode
+ * @property string $nameDe
+ * @property string|null $nameEn
+ */
 class Subregion extends Model
 {
-    use HasFactory;
-
     protected $table = 'subregions';
 
     protected $guarded = [];
 
-    public function nation()
+    public function nation(): BelongsTo
     {
         return $this->belongsTo(Nation::class);
     }
 
-    public function paraClubs()
+    public function paraClubs(): HasMany
     {
         return $this->hasMany(ParaClub::class, 'subregion_id');
     }
 
-    public function paraAthletes()
+    public function paraAthletes(): HasMany
     {
         return $this->hasMany(ParaAthlete::class, 'subregion_id');
     }

@@ -14,7 +14,8 @@
             @endif
         </p>
 
-        <form method="POST" action="{{ route('lenex.results.import', $meet) }}">
+        {{-- WICHTIG: jetzt zur neuen Route passen --}}
+        <form method="POST" action="{{ route('meets.lenex.results.import', $meet) }}">
             @csrf
 
             <input type="hidden" name="lenex_file_path" value="{{ $lenexFilePath }}">
@@ -53,7 +54,7 @@
                         <div class="ms-3">
                             @foreach($nationClubs as $club)
                                 @php
-                                    $clubKey   = ($club['club_id'] ?: md5($club['club_name'] . $nationCode));
+                                    $clubKey    = ($club['club_id'] ?: md5($club['club_name'] . $nationCode));
                                     $clubIdAttr = 'club-' . $nationCode . '-' . $clubKey;
                                 @endphp
 
@@ -74,7 +75,7 @@
                                     <ul class="list-unstyled ms-4 mb-1">
                                         @foreach($club['athletes'] as $athlete)
                                             @php
-                                                $aid          = $athlete['lenex_athlete_id'];
+                                                $aid           = $athlete['lenex_athlete_id'];
                                                 $athleteIdAttr = 'athlete-' . $aid;
                                             @endphp
                                             <li>

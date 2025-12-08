@@ -1,6 +1,9 @@
 <?php
 
+use App\Http\Controllers\ContinentController;
+use App\Http\Controllers\LenexImportController;
 use App\Http\Controllers\MeetAthleteController;
+use App\Http\Controllers\NationController;
 use App\Http\Controllers\ParaAthleteClassificationController;
 use App\Http\Controllers\ParaAthleteController;
 use App\Http\Controllers\ParaClassifierController;
@@ -11,119 +14,196 @@ use App\Http\Controllers\ParaRecordImportCandidateController;
 use App\Http\Controllers\ParaRecordImportController;
 use App\Http\Controllers\ParaSessionController;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\ContinentController;
-use App\Http\Controllers\NationController;
-use App\Http\Controllers\LenexImportController;
+
+/*
+|--------------------------------------------------------------------------
+| Startseite
+|--------------------------------------------------------------------------
+*/
 
 Route::get('/', function () {
     return redirect()->route('nations.index');
 })->name('home');
 
-// Continents CRUD
-Route::resource('continents', ContinentController::class);
+/*
+|--------------------------------------------------------------------------
+| Stammdaten: Kontinente & Nationen
+|--------------------------------------------------------------------------
+*/
 
-// Nations CRUD
+Route::resource('continents', ContinentController::class);
 Route::resource('nations', NationController::class);
 
-// LENEX upload (meeting structure)
-Route::get('/lenex/upload', [LenexImportController::class, 'create'])
-    ->name('lenex.upload.form');
+/*
+|--------------------------------------------------------------------------
+| LENEX – Meeting-Struktur (ohne konkretes Meet)
+|--------------------------------------------------------------------------
+*/
 
-Route::post('/lenex/upload', [LenexImportController::class, 'store'])
-    ->name('lenex.upload.store');
+Route::prefix('lenex')
+    ->name('lenex.')
+    ->group(function () {
+        Route::get('upload', [LenexImportController::class, 'create'])
+            ->name('upload.form');
 
-// Meetings main
+        Route::post('upload', [LenexImportController::class, 'store'])
+            ->name('upload.store');
+    });
+
+/*
+|--------------------------------------------------------------------------
+| Meetings & LENEX (entries/results) & Athleten je Meeting
+|--------------------------------------------------------------------------
+*/
+
 Route::resource('meets', ParaMeetController::class);
 
-Route::get('/meets/{meet}/results', [ParaMeetController::class, 'results'])
+// Ergebnisse-Übersicht eines Meetings
+Route::get('meets/{meet}/results', [ParaMeetController::class, 'results'])
     ->name('meets.results');
 
-// Nested structure (shallow so edit URLs are short)
-Route::resource('meets.sessions', ParaSessionController::class)->shallow();
-Route::resource('sessions.events', ParaEventController::class)->shallow();
-Route::resource('events.agegroups', ParaEventAgegroupController::class)->shallow();
+// Alles was an ein konkretes Meet gebunden ist:
+Route::prefix('meets/{meet}')
+    ->name('meets.')
+    ->group(function () {
 
-Route::get('/meets/{meet}/lenex/entries', [LenexImportController::class, 'createEntries'])
-    ->name('lenex.entries.form');
+        /*
+        |--------------------------------------------------------------
+        | LENEX Entries für ein bestehendes Meet
+        |--------------------------------------------------------------
+        */
+        Route::prefix('lenex')
+            ->name('lenex.')
+            ->group(function () {
+                // Entries-Import (Form + Verarbeitung)
+                Route::get('entries', [LenexImportController::class, 'createEntries'])
+                    ->name('entries.form');
 
-Route::post('/meets/{meet}/lenex/entries', [LenexImportController::class, 'storeEntries'])
-    ->name('lenex.entries.store');
+                Route::post('entries', [LenexImportController::class, 'storeEntries'])
+                    ->name('entries.store');
 
-Route::delete('/meets/{meet}/entries', [ParaMeetController::class, 'destroyEntries'])
-    ->name('meets.entries.destroy');
+                // Ergebnisse-Import (3-stufig: Upload -> Preview -> Import)
+                Route::get('results', [LenexImportController::class, 'createResults'])
+                    ->name('results.form');        // Upload-Formular
 
-Route::get('/meets/{meet}/athletes', [MeetAthleteController::class, 'index'])
-    ->name('meets.athletes.index');
+                Route::post('results/preview', [LenexImportController::class, 'previewResults'])
+                    ->name('results.preview');     // Datei + Vorauswahl (Nation/Verein/Athlet)
 
-Route::get('/meets/{meet}/athletes/create', [MeetAthleteController::class, 'create'])
-    ->name('meets.athletes.create');
+                Route::post('results/import', [LenexImportController::class, 'importResults'])
+                    ->name('results.import');      // Bestätigung + eigentlicher Import
+            });
 
-Route::post('/meets/{meet}/athletes', [MeetAthleteController::class, 'store'])
-    ->name('meets.athletes.store');
+        /*
+        |--------------------------------------------------------------
+        | Meldungen (Entries) – komplett löschen
+        |--------------------------------------------------------------
+        */
+        Route::delete('entries', [ParaMeetController::class, 'destroyEntries'])
+            ->name('entries.destroy');
 
-// NEU: Events für Athlet auswählen (nur Events mit passender Agegroup)
-Route::get('/meets/{meet}/athletes/{athlete}/entries/create', [MeetAthleteController::class, 'createEntries'])
-    ->name('meets.athletes.entries.create');
+        /*
+        |--------------------------------------------------------------
+        | Athleten in einem konkreten Meet
+        |--------------------------------------------------------------
+        */
+        Route::prefix('athletes')
+            ->name('athletes.')
+            ->group(function () {
+                // Liste / Anlegen von Athleten eines Meets
+                Route::get('/', [MeetAthleteController::class, 'index'])
+                    ->name('index');
 
-Route::post('/meets/{meet}/athletes/{athlete}/entries', [MeetAthleteController::class, 'storeEntries'])
-    ->name('meets.athletes.entries.store');
+                Route::get('create', [MeetAthleteController::class, 'create'])
+                    ->name('create');
 
+                Route::post('/', [MeetAthleteController::class, 'store'])
+                    ->name('store');
+
+                // Ergebnisse eines bestimmten Athleten in diesem Meet
+                Route::get('{athlete}/results', [MeetAthleteController::class, 'results'])
+                    ->name('results');
+
+                // Events für Athlet in diesem Meet auswählen (nur passende Agegroup)
+                Route::get('{athlete}/entries/create', [MeetAthleteController::class, 'createEntries'])
+                    ->name('entries.create');
+
+                Route::post('{athlete}/entries', [MeetAthleteController::class, 'storeEntries'])
+                    ->name('entries.store');
+            });
+    });
+
+/*
+|--------------------------------------------------------------------------
+| Athleten (global) & Klassifikationen
+|--------------------------------------------------------------------------
+*/
+
+// Athleten-Stammdaten
 Route::resource('athletes', ParaAthleteController::class);
 
-// Nested CRUD for classification history
-Route::resource('athletes.classifications', ParaAthleteClassificationController::class)->shallow();
+// Bestzeiten eines Athleten
+Route::get('athletes/{athlete}/best-times', [ParaAthleteController::class, 'bestTimes'])
+    ->name('athletes.best-times');
+
+// Klassifikations-Historie (nested, shallow)
+Route::resource('athletes.classifications', ParaAthleteClassificationController::class)
+    ->shallow();
+
+/*
+|--------------------------------------------------------------------------
+| Klassifizierer
+|--------------------------------------------------------------------------
+*/
 
 Route::resource('classifiers', ParaClassifierController::class);
 
-Route::get('/meets/{meet}/lenex/results', [LenexImportController::class, 'createResults'])
-    ->name('lenex.results.form');
+/*
+|--------------------------------------------------------------------------
+| Sitzungen / Events / Agegroups (nested, shallow)
+|--------------------------------------------------------------------------
+*/
 
-Route::post('/meets/{meet}/lenex/results', [LenexImportController::class, 'storeResults'])
-    ->name('lenex.results.store');
+Route::resource('meets.sessions', ParaSessionController::class)
+    ->shallow();
 
-Route::get('/meets/{meet}/athletes/{athlete}/results', [MeetAthleteController::class, 'results'])
-    ->name('meets.athletes.results');
+Route::resource('sessions.events', ParaEventController::class)
+    ->shallow();
 
-Route::get('/athletes/{athlete}/best-times', [ParaAthleteController::class, 'bestTimes'])
-    ->name('athletes.best-times');
+Route::resource('events.agegroups', ParaEventAgegroupController::class)
+    ->shallow();
 
-Route::get('/meets/{meet}/lenex/results', [LenexImportController::class, 'createResults'])
-    ->name('lenex.results.form');
+/*
+|--------------------------------------------------------------------------
+| Para-Records & Import-Kandidaten
+|--------------------------------------------------------------------------
+*/
 
-Route::post('/meets/{meet}/lenex/results', [LenexImportController::class, 'storeResults'])
-    ->name('lenex.results.store');
-
-// Upload-Formular (wie bisher)
-Route::get('/meets/{meet}/lenex/results', [LenexImportController::class, 'createResults'])
-    ->name('lenex.results.form');
-
-// Schritt 1: Datei hochladen → Vorschau mit Auswahl
-Route::post('/meets/{meet}/lenex/results/preview', [LenexImportController::class, 'previewResults'])
-    ->name('lenex.results.preview');
-
-// Schritt 2: Auswahl importieren
-Route::post('/meets/{meet}/lenex/results/import', [LenexImportController::class, 'importResults'])
-    ->name('lenex.results.import');
-
-Route::get('/para-records/import', [ParaRecordImportController::class, 'create'])
-    ->name('para-records.import.create');
-
-Route::post('/para-records/import', [ParaRecordImportController::class, 'store'])
-    ->name('para-records.import.store');
-
-Route::get('/para-records', [ParaRecordImportController::class, 'index'])
-    ->name('para-records.index');
-
-Route::prefix('para-records/import-candidates')
-    ->name('para-records.import-candidates.')
+Route::prefix('para-records')
+    ->name('para-records.')
     ->group(function () {
-        Route::get('/', [ParaRecordImportCandidateController::class, 'index'])
+
+        // Übersicht der Records
+        Route::get('/', [ParaRecordImportController::class, 'index'])
             ->name('index');
 
-        Route::get('{candidate}', [ParaRecordImportCandidateController::class, 'edit'])
-            ->name('edit');
+        // Import (Datei hochladen + verarbeiten)
+        Route::get('import', [ParaRecordImportController::class, 'create'])
+            ->name('import.create');
 
-        Route::post('{candidate}', [ParaRecordImportCandidateController::class, 'update'])
-            ->name('update');
+        Route::post('import', [ParaRecordImportController::class, 'store'])
+            ->name('import.store');
+
+        // Import-Kandidaten (Review / Übernahme)
+        Route::prefix('import-candidates')
+            ->name('import-candidates.')
+            ->group(function () {
+                Route::get('/', [ParaRecordImportCandidateController::class, 'index'])
+                    ->name('index');
+
+                Route::get('{candidate}', [ParaRecordImportCandidateController::class, 'edit'])
+                    ->name('edit');
+
+                Route::post('{candidate}', [ParaRecordImportCandidateController::class, 'update'])
+                    ->name('update');
+            });
     });
-

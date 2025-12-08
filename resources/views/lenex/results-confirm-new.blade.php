@@ -21,7 +21,8 @@
             oder die Anlage als neue Datensätze bestätigen.
         </div>
 
-        <form method="POST" action="{{ route('lenex.results.import', $meet) }}">
+        {{-- WICHTIG: neue Route aus web.php verwenden --}}
+        <form method="POST" action="{{ route('meets.lenex.results.import', $meet) }}">
             @csrf
 
             <input type="hidden" name="lenex_file_path" value="{{ $lenexFilePath }}">
@@ -138,8 +139,9 @@
                     Auswahl übernehmen und Ergebnisse importieren
                 </button>
 
-                <a href="{{ route('lenex.results.preview', $meet) }}" class="btn btn-secondary">
-                    Zurück zur Schwimmer-Auswahl
+                {{-- Zurück: auf das Upload-Formular (GET), nicht auf die POST-Preview-Route --}}
+                <a href="{{ route('meets.lenex.results.form', $meet) }}" class="btn btn-secondary">
+                    Zurück zum Datei-Upload
                 </a>
             </div>
         </form>

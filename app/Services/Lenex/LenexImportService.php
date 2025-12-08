@@ -2,11 +2,13 @@
 
 namespace App\Services\Lenex;
 
+use App\Models\ParaClub;
 use App\Models\ParaEntry;
 use App\Models\ParaEvent;
 use App\Models\ParaEventAgegroup;
 use App\Models\ParaMeet;
 use App\Models\ParaSession;
+use App\Models\Subregion;
 use App\Services\AgegroupResolver;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -310,6 +312,8 @@ class LenexImportService
             // ParaClub aus Resolver
             $club = $this->clubResolver->resolveFromLenex($clubNode);
 
+            $this->applyClubMetaFromLenex($club, $clubNode);
+
             foreach ($clubNode->ATHLETES->ATHLETE ?? [] as $athNode) {
 
                 $athlete = $this->athleteResolver->resolveFromLenex(
@@ -391,6 +395,64 @@ class LenexImportService
     }
 
     /**
+     * Ergänzt ParaClub mit ShortNameDe, Subregion und Region
+     * anhand des LENEX-CLUB-Knotens.
+     */
+    public function applyClubMetaFromLenex(ParaClub $club, SimpleXMLElement $clubNode): void
+    {
+        // --- ShortNameDe ----------------------------------------------------
+        $shortName = trim((string) ($clubNode['shortname'] ?? ''));
+
+        if ($shortName !== '') {
+            // Shortname aus LENEX übernehmen
+            if ($club->shortNameDe !== $shortName) {
+                $club->shortNameDe = $shortName;
+            }
+        } elseif (empty($club->shortNameDe) && !empty($club->nameDe)) {
+            // Fallback: wenn noch kein ShortNameDe gesetzt ist
+            $club->shortNameDe = $club->nameDe;
+        }
+
+        // --- Subregion / Region --------------------------------------------
+        // LENEX: <CLUB region="xxx">
+        $regionCode = trim((string) ($clubNode['region'] ?? ''));
+
+        if ($regionCode !== '') {
+            // nur setzen, wenn noch keine Subregion hinterlegt ist
+            if ($club->subregion_id === null) {
+                $subregion = Subregion::where('lsvCode', $regionCode)->first();
+
+                if ($subregion) {
+                    $club->subregion_id = $subregion->id;
+                    // Region-Feld auch gleich aus lsvCode setzen
+                    $club->region = $subregion->lsvCode;
+                } else {
+                    // Kein passender Eintrag → subregion_id explizit null lassen,
+                    // Region-Feld kann trotzdem den Code speichern, wenn du willst:
+                    $club->subregion_id = null;
+                    $club->region = $regionCode;
+                }
+            } elseif (empty($club->region)) {
+                // es gibt schon eine Subregion, aber noch keine Region → nachziehen
+                $subregion = $club->subregion;
+                if ($subregion && !empty($subregion->lsvCode)) {
+                    $club->region = $subregion->lsvCode;
+                }
+            }
+        } else {
+            // kein region-Attribut im LENEX, aber Subregion gesetzt?
+            if ($club->subregion_id && empty($club->region)) {
+                $subregion = $club->subregion;
+                if ($subregion && !empty($subregion->lsvCode)) {
+                    $club->region = $subregion->lsvCode;
+                }
+            }
+        }
+
+        $club->save();
+    }
+
+    /**
      * Zeit-String (HH:MM:SS.cc / MM:SS.cc) → Millisekunden.
      */
     public function parseTimeToMs(?string $time): ?int
@@ -412,4 +474,5 @@ class LenexImportService
 
         return (($hours * 3600) + ($minutes * 60) + $seconds) * 1000 + $ms;
     }
+
 }
