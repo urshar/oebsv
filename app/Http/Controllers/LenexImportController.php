@@ -288,55 +288,76 @@ class LenexImportController extends Controller
 
         foreach ($meetNode->CLUBS->CLUB ?? [] as $clubNode) {
 
-            $clubName = (string) ($clubNode['name'] ?? '');
-            $nationCode = (string) ($clubNode['nation'] ?? '');
+            $clubName = trim((string) ($clubNode['name'] ?? ''));
+            $nationCode = trim((string) ($clubNode['nation'] ?? ''));
             $clubKey = $nationCode.'|'.$clubName;
 
-            $existingClub = ParaClub::where('nameDe', $clubName)->first();
+            // "neuer Verein?" – wir verwenden nameDe ODER shortNameDe zum Abgleich
+            $existingClub = ParaClub::query()
+                ->where(function ($q) use ($clubName) {
+                    $q->where('nameDe', $clubName)
+                        ->orWhere('shortNameDe', $clubName);
+                })
+                ->first();
+
             $clubIsNew = !$existingClub;
             $clubHasSelectedAthletes = false;
 
             foreach ($clubNode->ATHLETES->ATHLETE ?? [] as $athNode) {
                 $lenexAthleteId = (string) ($athNode['athleteid'] ?? '');
                 if ($lenexAthleteId === '' || !isset($selectedSet[$lenexAthleteId])) {
+                    // nicht ausgewählt → ignorieren
                     continue;
                 }
 
                 $clubHasSelectedAthletes = true;
 
-                $firstName = (string) ($athNode['firstname'] ?? $athNode['givenname'] ?? '');
-                $lastName = (string) ($athNode['lastname'] ?? $athNode['familyname'] ?? '');
-                $birthdate = (string) ($athNode['birthdate'] ?? '');
-
-                $athleteQuery = ParaAthlete::query()
-                    ->where('firstName', $firstName)
-                    ->where('lastName', $lastName);
-
-                if ($birthdate) {
-                    $athleteQuery->where('birthdate', $birthdate);
+                // Vornamen robust aus LENEX holen (firstname ODER givenname)
+                $first = trim((string) ($athNode['firstname'] ?? ''));
+                if ($first === '') {
+                    $first = trim((string) ($athNode['givenname'] ?? ''));
                 }
 
-                if ($existingClub) {
-                    $athleteQuery->where('para_club_id', $existingClub->id);
+                // Nachnamen robust aus LENEX holen (lastname ODER familyname)
+                $last = trim((string) ($athNode['lastname'] ?? ''));
+                if ($last === '') {
+                    $last = trim((string) ($athNode['familyname'] ?? ''));
                 }
 
-                $existingAthlete = $athleteQuery->first();
+                $birthdate = trim((string) ($athNode['birthdate'] ?? ''));
+
+                // Bestehenden Athleten suchen:
+                //  - case-insensitiv auf Vor-/Nachname
+                //  - optionales Match auf birthdate (falls vorhanden)
+                $existingAthlete = ParaAthlete::query()
+                    ->whereRaw('LOWER("firstName") = LOWER(?)', [$first])
+                    ->whereRaw('LOWER("lastName")  = LOWER(?)', [$last])
+                    ->when($birthdate !== '', function ($q) use ($birthdate) {
+                        $q->whereDate('birthdate', $birthdate);
+                    })
+                    ->first();
 
                 if ($existingAthlete) {
+                    // dieser LENEX-Athlete wird als "bereits vorhanden" behandelt
                     $existingSelectedIds[] = $lenexAthleteId;
                 } else {
-                    $newAthletesById[$lenexAthleteId] = [
-                        'lenexAthleteId' => $lenexAthleteId,
-                        'firstName' => $firstName,
-                        'lastName' => $lastName,
-                        'birthdate' => $birthdate,
-                        'clubName' => $clubName,
-                        'nation' => $nationCode,
-                        'clubKey' => $clubKey,
-                    ];
+                    // nur einmal pro LENEX-ID eintragen
+                    if (!isset($newAthletesById[$lenexAthleteId])) {
+                        $newAthletesById[$lenexAthleteId] = [
+                            'lenexAthleteId' => $lenexAthleteId,
+                            'firstName' => $first,
+                            'lastName' => $last,
+                            'birthdate' => $birthdate,
+                            'clubName' => $clubName,
+                            'nation' => $nationCode,
+                            'clubKey' => $clubKey,
+                        ];
+                    }
                 }
             }
 
+            // neuer Verein nur dann zur Bestätigung anbieten,
+            // wenn es dort mindestens einen ausgewählten Athleten gibt
             if ($clubIsNew && $clubHasSelectedAthletes && !isset($newClubsByKey[$clubKey])) {
                 $newClubsByKey[$clubKey] = [
                     'nation' => $nationCode,
@@ -347,6 +368,7 @@ class LenexImportController extends Controller
         }
 
         $newClubs = array_values($newClubsByKey);
+
 
         // Kandidaten für neue Athleten suchen
         $newAthletes = [];

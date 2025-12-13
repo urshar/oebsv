@@ -105,7 +105,7 @@
                                             @foreach ($result->splits as $split)
                                                 <span class="me-3">
                                                         {{ $split->distance }}m:
-                                                        {{ number_format($split->time_ms / 1000, 2, ',', '') }} s
+                                                        {{ $split->time_formatted }}
                                                     </span>
                                             @endforeach
                                         </td>

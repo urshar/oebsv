@@ -15,4 +15,10 @@ class ParaSplit extends Model
     {
         return $this->belongsTo(ParaResult::class, 'para_result_id');
     }
+
+    public function getTimeFormattedAttribute(): string
+    {
+        return format_swim_time($this->time_ms);
+    }
+
 }
