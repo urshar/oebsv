@@ -2,6 +2,8 @@
 
 namespace App\Services\Lenex;
 
+use App\Models\ParaAthlete;
+use App\Models\ParaClub;
 use App\Models\ParaEntry;
 use App\Models\ParaEvent;
 use App\Models\ParaMeet;
@@ -26,14 +28,20 @@ class LenexResultImporter
      * Importiert Resultate für ein bestimmtes Meeting aus einer LENEX-Datei.
      *
      * @param  string  $filePath  Pfad zur Lenex-Datei
-     * @param  ParaMeet  $meet  Meeting, in das importiert wird
-     * @param  array<string>|null  $allowedAthleteIds  optionale Liste von LENEX-ATHLETEIDs,
-     *                                                nur diese Athleten werden importiert
+     * @param  ParaMeet  $meet  Meeting
+     * @param  array<string>  $allowedAthleteIds  Liste der zu importierenden LENEX-ATHLETEIDs
+     * @param  array  $clubMapping  [clubKey => existing_club_id]
+     * @param  array  $athleteMapping  [lenexAthleteId => existing_athlete_id]
      * @throws Throwable
      */
-    public function import(string $filePath, ParaMeet $meet, ?array $allowedAthleteIds = null): void
-    {
-        // gleiche XML/LXF/ZIP-Logik wie Struktur/Entries
+    public function import(
+        string $filePath,
+        ParaMeet $meet,
+        ?array $allowedAthleteIds = null,
+        array $clubMapping = [],
+        array $athleteMapping = []
+    ): void {
+        // XML/LXF/ZIP laden
         $root = $this->lenexImportService->loadLenexRootFromPath($filePath);
 
         $meetNode = $root->MEETS->MEET[0] ?? null;
@@ -83,10 +91,8 @@ class LenexResultImporter
                             ? (int) $rankingNode['place']
                             : null;
 
-                        // pro Result nur das Ranking mit kleinstem order (meist "offiziell")
                         if (!isset($rankingByResultId[$resultId]) ||
                             $order < $rankingByResultId[$resultId]['order']) {
-
                             $rankingByResultId[$resultId] = [
                                 'place' => $place,
                                 'order' => $order,
@@ -103,41 +109,86 @@ class LenexResultImporter
             $eventByLenexId,
             $heatNumberById,
             $rankingByResultId,
-            $allowedAthleteIds
+            $allowedAthleteIds,
+            $clubMapping,
+            $athleteMapping
         ) {
-
             foreach ($meetNode->CLUBS->CLUB ?? [] as $clubNode) {
 
+                $clubName = (string) ($clubNode['name'] ?? '');
                 $nationCode = (string) ($clubNode['nation'] ?? '');
-                $nation = $nationCode !== '' ? $this->nationResolver->fromLenexCode($nationCode) : null;
+                $clubKey = $nationCode.'|'.$clubName;
 
-                // Verein wie beim Entries-Import auflösen
-                $club = $this->clubResolver->resolveFromLenex($clubNode);
-
-                // >>> NEU: Bei neu angelegten ParaClubs ShortNameDe + Region setzen
-                $this->lenexImportService->applyClubMetaFromLenex($club, $clubNode);
-                // <<< ENDE NEU
+                // ZUERST: relevante Athleten dieses Vereins bestimmen
+                $relevantAthletes = []; // array<SimpleXMLElement>
 
                 foreach ($clubNode->ATHLETES->ATHLETE ?? [] as $athNode) {
-
                     $lenexAthleteId = (string) ($athNode['athleteid'] ?? '');
                     if ($lenexAthleteId === '') {
                         continue;
                     }
 
-                    // Filter: nur ausgewählte Athleten importieren, falls Liste übergeben wurde
-                    if ($allowedAthleteIds !== null
-                        && !in_array($lenexAthleteId, $allowedAthleteIds, true)) {
+                    // Nur Athleten mit RESULTs
+                    if (!isset($athNode->RESULTS->RESULT)) {
                         continue;
                     }
 
-                    // Athlet via Resolver (Name, Lizenz, Nation, usw.)
-                    $athlete = $this->athleteResolver->resolveFromLenex(
-                        $athNode,
-                        $club,
-                        $nation
-                    );
+                    // Filter: nur ausgewählte Athleten importieren (falls Liste übergeben)
+                    if ($allowedAthleteIds !== null &&
+                        !in_array($lenexAthleteId, $allowedAthleteIds, true)) {
+                        continue;
+                    }
 
+                    $relevantAthletes[] = $athNode;
+                }
+
+                // Wenn es in diesem Club keinen relevanten Athleten gibt,
+                // legen wir den Verein GAR NICHT an (z.B. nur Judges).
+                if (count($relevantAthletes) === 0) {
+                    continue;
+                }
+
+                // Nation-Model (optional)
+                $nation = $nationCode !== ''
+                    ? $this->nationResolver->fromLenexCode($nationCode)
+                    : null;
+
+                // Club über Mapping oder Resolver auflösen
+                if (isset($clubMapping[$clubKey]) && $clubMapping[$clubKey]) {
+                    $club = ParaClub::find($clubMapping[$clubKey]);
+                    if (!$club) {
+                        // Falls ID ungültig, Fallback auf Resolver
+                        $club = $this->clubResolver->resolveFromLenex($clubNode);
+                    }
+                } else {
+                    $club = $this->clubResolver->resolveFromLenex($clubNode);
+                }
+
+                // Zusatzinfos: shortNameDe / subregion_id etc.
+                // ACHTUNG: applyClubMetaFromLenex darf KEIN $club->region mehr setzen!
+                $this->lenexImportService->applyClubMetaFromLenex($club, $clubNode);
+
+                // Jetzt alle relevanten Athleten dieses Clubs durchgehen
+                foreach ($relevantAthletes as $athNode) {
+
+                    $lenexAthleteId = (string) ($athNode['athleteid'] ?? '');
+
+                    // Athleten-Mapping: existierender ParaAthlete zugeordnet?
+                    $athlete = null;
+                    if (isset($athleteMapping[$lenexAthleteId]) && $athleteMapping[$lenexAthleteId]) {
+                        $athlete = ParaAthlete::find($athleteMapping[$lenexAthleteId]);
+                    }
+
+                    // Wenn kein Mapping gewählt wurde, wie bisher via Resolver
+                    if (!$athlete) {
+                        $athlete = $this->athleteResolver->resolveFromLenex(
+                            $athNode,
+                            $club,
+                            $nation
+                        );
+                    }
+
+                    // RESULTS dieses Athleten importieren
                     foreach ($athNode->RESULTS->RESULT ?? [] as $resultNode) {
 
                         $lenexEventId = (string) ($resultNode['eventid'] ?? '');
@@ -158,7 +209,7 @@ class LenexResultImporter
                             [
                                 'para_meet_id' => $meet->id,
                                 'para_session_id' => $eventModel->para_session_id,
-                                'para_event_agegroup_id' => null, // kann später gesetzt werden
+                                'para_event_agegroup_id' => null,
                                 'para_club_id' => $club->id,
 
                                 'lenex_athleteid' => $lenexAthleteId,
@@ -229,5 +280,4 @@ class LenexResultImporter
             }
         });
     }
-
 }

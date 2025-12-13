@@ -12,6 +12,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\View\View;
 use RuntimeException;
 use SimpleXMLElement;
@@ -217,8 +218,9 @@ class LenexImportController extends Controller
         Request $request,
         ParaMeet $meet,
         LenexResultImporter $importer
-    ): RedirectResponse|View {
-        $data = $request->validate([
+    ) {
+        // WICHTIG: KEIN $request->validate() -> sonst back() auf POST-URL
+        $validator = Validator::make($request->all(), [
             'lenex_file_path' => ['required', 'string'],
             'selected_athletes' => ['array'],
             'selected_athletes.*' => ['string'],
@@ -231,6 +233,15 @@ class LenexImportController extends Controller
             'athlete_mapping.*' => ['nullable', 'integer'],
         ]);
 
+        if ($validator->fails()) {
+            // IMMER auf Upload-Formular (GET), nicht auf die /import-POST-Route
+            return redirect()
+                ->route('meets.lenex.results.form', $meet)
+                ->withErrors($validator)
+                ->withInput();
+        }
+
+        $data = $validator->validated();
         $filePath = $data['lenex_file_path'];
         $selectedAthletes = $data['selected_athletes'] ?? [];
         $confirmationStep = (bool) ($data['confirmation_step'] ?? false);
@@ -238,33 +249,45 @@ class LenexImportController extends Controller
         $clubMapping = $data['club_mapping'] ?? [];
         $athleteMapping = $data['athlete_mapping'] ?? [];
 
+        // 1) Datei noch vorhanden?
         if (!is_file($filePath)) {
-            return back()
-                ->withErrors(['lenex_file_path' => 'Die Lenex-Datei konnte nicht mehr gefunden werden.'])
-                ->withInput();
+            return redirect()
+                ->route('meets.lenex.results.form', $meet)
+                ->withErrors([
+                    'lenex_file_path' => 'Die Lenex-Datei konnte nicht mehr gefunden werden.',
+                ]);
         }
 
+        // 2) Irgendwelche Athleten ausgewählt?
         if (empty($selectedAthletes)) {
-            return back()
-                ->withErrors(['selected_athletes' => 'Es wurden keine Schwimmer für den Import ausgewählt.'])
-                ->withInput();
+            return redirect()
+                ->route('meets.lenex.results.form', $meet)
+                ->withErrors([
+                    'selected_athletes' => 'Es wurden keine Schwimmer für den Import ausgewählt.',
+                ]);
         }
 
+        // 3) XML laden
         $root = $this->lenexImportService->loadLenexRootFromPath($filePath);
         $meetNode = $root->MEETS->MEET[0] ?? null;
 
         if (!$meetNode instanceof SimpleXMLElement) {
-            return back()
-                ->withErrors(['lenex_file_path' => 'Keine MEET-Definition im LENEX (Results) gefunden.'])
-                ->withInput();
+            return redirect()
+                ->route('meets.lenex.results.form', $meet)
+                ->withErrors([
+                    'lenex_file_path' => 'Keine MEET-Definition im LENEX (Results) gefunden.',
+                ]);
         }
 
+        // --- ab hier: neue Vereine/Athleten ermitteln ---
+
         $selectedSet = array_flip($selectedAthletes);
-        $newClubsByKey = []; // clubKey => ['nation'=>..,'name'=>..,'clubKey'=>..]
+        $newClubsByKey = []; // clubKey => [...]
         $newAthletesById = []; // lenexAthleteId => [...]
-        $existingSelectedIds = []; // lenexAthleteId[], für bereits vorhandene Athleten
+        $existingSelectedIds = []; // lenexAthleteId[]
 
         foreach ($meetNode->CLUBS->CLUB ?? [] as $clubNode) {
+
             $clubName = (string) ($clubNode['name'] ?? '');
             $nationCode = (string) ($clubNode['nation'] ?? '');
             $clubKey = $nationCode.'|'.$clubName;
@@ -314,8 +337,6 @@ class LenexImportController extends Controller
                 }
             }
 
-            // Verein als "neu" markieren, wenn er im System nicht existiert,
-            // aber mindestens ein ausgewählter Athlet dazu gehört
             if ($clubIsNew && $clubHasSelectedAthletes && !isset($newClubsByKey[$clubKey])) {
                 $newClubsByKey[$clubKey] = [
                     'nation' => $nationCode,
@@ -327,9 +348,9 @@ class LenexImportController extends Controller
 
         $newClubs = array_values($newClubsByKey);
 
-        // neue Athleten mit möglichen Kandidaten anreichern
+        // Kandidaten für neue Athleten suchen
         $newAthletes = [];
-        foreach ($newAthletesById as $lenexId => $ath) {
+        foreach ($newAthletesById as $ath) { // $lenexId nicht mehr ungenutzt
             $candidatesQuery = ParaAthlete::query()
                 ->where('lastName', $ath['lastName'])
                 ->where('firstName', $ath['firstName']);
@@ -347,7 +368,7 @@ class LenexImportController extends Controller
             $newAthletes[] = $ath;
         }
 
-        // Schritt 2: Bestätigungs-View mit Zuordnung, wenn es neue Clubs oder Athleten gibt
+        // Schritt 2: Bestätigungsmaske anzeigen, falls nötig
         if ((!empty($newClubs) || !empty($newAthletes)) && !$confirmationStep) {
             $existingClubs = ParaClub::orderBy('nameDe')->get();
 
@@ -365,10 +386,10 @@ class LenexImportController extends Controller
         $allNewIds = array_keys($newAthletesById);
 
         if ($confirmationStep) {
-            // nur neu importieren, was per Checkbox bestätigt wurde
+            // nur bestätigte neue Athleten
             $allowedNewIds = array_values(array_intersect($confirmedNewAthletes, $allNewIds));
         } else {
-            // es gibt keine neuen Athleten
+            // keine neuen Athleten vorhanden
             $allowedNewIds = [];
         }
 
@@ -392,13 +413,17 @@ class LenexImportController extends Controller
         } catch (Throwable $e) {
             report($e);
 
-            return back()
-                ->withErrors(['lenex_file_path' => 'Import failed: '.$e->getMessage()])
-                ->withInput();
+            return redirect()
+                ->route('meets.lenex.results.form', $meet)
+                ->withErrors([
+                    'lenex_file_path' => 'Import failed: '.$e->getMessage(),
+                ]);
         }
 
         return redirect()
             ->route('meets.results', $meet)
             ->with('status', 'Resultate wurden importiert.');
     }
+
+
 }

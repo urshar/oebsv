@@ -18,7 +18,8 @@
 
         <div class="card mt-3">
             <div class="card-body">
-                <form action="{{ route('lenex.entries.store', $meet) }}" method="POST" enctype="multipart/form-data">
+                <form action="{{ route('meets.lenex.entries.store', $meet) }}" method="POST"
+                      enctype="multipart/form-data">
                     @csrf
 
                     <div class="mb-3">

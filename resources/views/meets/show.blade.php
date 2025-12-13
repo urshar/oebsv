@@ -1,3 +1,4 @@
+@php use Illuminate\Support\Carbon; @endphp
 @extends('layouts.app')
 
 @section('content')
@@ -17,13 +18,13 @@
             <a href="{{ route('meets.sessions.create', $meet) }}" class="btn btn-primary btn-sm">
                 Session hinzufügen
             </a>
-            <a href="{{ route('lenex.entries.form', $meet) }}" class="btn btn-sm btn-outline-primary">
+            <a href="{{ route('meets.lenex.entries.form', $meet) }}" class="btn btn-sm btn-outline-primary">
                 Entries importieren
             </a>
             <a href="{{ route('meets.athletes.index', $meet) }}" class="btn btn-outline-primary btn-sm">
                 Athleten & Meldungen
             </a>
-            <a href="{{ route('lenex.results.form', $meet) }}" class="btn btn-outline-primary btn-sm">
+            <a href="{{ route('meets.lenex.results.form', $meet) }}" class="btn btn-outline-primary btn-sm">
                 Resultate importieren (Lenex)
             </a>
             <a href="{{ route('meets.results', $meet) }}" class="btn btn-primary btn-sm">
@@ -79,7 +80,7 @@
                         <strong>Session {{ $session->number }}</strong>
                         – {{ optional($session->date)->format('d.m.Y') }}
                         @if($session->start_time)
-                            – {{ \Illuminate\Support\Carbon::parse($session->start_time)->format('H:i') }} Uhr
+                            – {{ Carbon::parse($session->start_time)->format('H:i') }} Uhr
                         @endif
                     </div>
                     <div>
@@ -113,7 +114,9 @@
                                     <td>
                                         @php $s = $event->swimstyle; @endphp
                                         @if($s)
-                                            {{ $s->distance }}m {{ $s->stroke }}@if($s->is_relay) Staffel @endif
+                                            {{ $s->distance }}m {{ $s->stroke }}@if($s->is_relay)
+                                                Staffel
+                                            @endif
                                         @else
                                             –
                                         @endif

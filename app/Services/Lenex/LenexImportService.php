@@ -400,52 +400,24 @@ class LenexImportService
      */
     public function applyClubMetaFromLenex(ParaClub $club, SimpleXMLElement $clubNode): void
     {
-        // --- ShortNameDe ----------------------------------------------------
-        $shortName = trim((string) ($clubNode['shortname'] ?? ''));
-
+        // Kurzname, falls im LENEX vorhanden
+        $shortName = (string) ($clubNode['shortname'] ?? $clubNode['name'] ?? '');
         if ($shortName !== '') {
-            // Shortname aus LENEX übernehmen
-            if ($club->shortNameDe !== $shortName) {
-                $club->shortNameDe = $shortName;
-            }
-        } elseif (empty($club->shortNameDe) && !empty($club->nameDe)) {
-            // Fallback: wenn noch kein ShortNameDe gesetzt ist
-            $club->shortNameDe = $club->nameDe;
+            $club->shortNameDe = $shortName;
         }
 
-        // --- Subregion / Region --------------------------------------------
-        // LENEX: <CLUB region="xxx">
-        $regionCode = trim((string) ($clubNode['region'] ?? ''));
+        // Region-Code aus LENEX (z.B. WLSV, NLSV, …)
+        $regionCode = (string) ($clubNode['region'] ?? '');
 
         if ($regionCode !== '') {
-            // nur setzen, wenn noch keine Subregion hinterlegt ist
-            if ($club->subregion_id === null) {
-                $subregion = Subregion::where('lsvCode', $regionCode)->first();
+            // Subregion anhand lsvCode suchen
+            $subregion = Subregion::where('lsvCode', $regionCode)->first();
 
-                if ($subregion) {
-                    $club->subregion_id = $subregion->id;
-                    // Region-Feld auch gleich aus lsvCode setzen
-                    $club->region = $subregion->lsvCode;
-                } else {
-                    // Kein passender Eintrag → subregion_id explizit null lassen,
-                    // Region-Feld kann trotzdem den Code speichern, wenn du willst:
-                    $club->subregion_id = null;
-                    $club->region = $regionCode;
-                }
-            } elseif (empty($club->region)) {
-                // es gibt schon eine Subregion, aber noch keine Region → nachziehen
-                $subregion = $club->subregion;
-                if ($subregion && !empty($subregion->lsvCode)) {
-                    $club->region = $subregion->lsvCode;
-                }
-            }
-        } else {
-            // kein region-Attribut im LENEX, aber Subregion gesetzt?
-            if ($club->subregion_id && empty($club->region)) {
-                $subregion = $club->subregion;
-                if ($subregion && !empty($subregion->lsvCode)) {
-                    $club->region = $subregion->lsvCode;
-                }
+            if ($subregion) {
+                $club->subregion_id = $subregion->id;
+            } else {
+                // wenn kein passender LSV-Code gefunden wird, Subregion auf null
+                $club->subregion_id = null;
             }
         }
 
