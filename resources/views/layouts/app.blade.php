@@ -46,6 +46,12 @@
                class="text-white text-decoration-none {{ request()->is('meets*') ? 'fw-bold text-decoration-underline' : '' }}">
                 Meets
             </a>
+
+            @php $navMeet = request()->route('meet'); @endphp
+            <a href="{{ $navMeet ? route('meets.lenex.relays.form', $navMeet) : route('meets.index') }}"
+               class="text-white text-decoration-none {{ request()->is('meets/*/lenex/relays*') ? 'fw-bold text-decoration-underline' : '' }}">
+                Relay Import
+            </a>
             <a href="{{ route('athletes.index') }}"
                class="text-white text-decoration-none {{ request()->is('athletes*') ? 'fw-bold text-decoration-underline' : '' }}">
                 Athletes

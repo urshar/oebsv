@@ -14,13 +14,13 @@ class ParaMeet extends Model
     protected $guarded = [];
 
     protected $casts = [
-        'from_date'         => 'date',
-        'to_date'           => 'date',
-        'entry_start_date'  => 'date',
-        'entry_deadline'    => 'date',
-        'withdraw_until'    => 'date',
-        'lenex_revisiondate'=> 'date',
-        'lenex_created'     => 'datetime',
+        'from_date' => 'date',
+        'to_date' => 'date',
+        'entry_start_date' => 'date',
+        'entry_deadline' => 'date',
+        'withdraw_until' => 'date',
+        'lenex_revisiondate' => 'date',
+        'lenex_created' => 'datetime',
     ];
 
     public function nation(): BelongsTo
@@ -53,6 +53,11 @@ class ParaMeet extends Model
     public function results(): HasMany
     {
         return $this->hasMany(ParaResult::class, 'para_meet_id');
+    }
+
+    public function relayEntries(): HasMany
+    {
+        return $this->hasMany(ParaRelayEntry::class, 'para_meet_id');
     }
 
 }

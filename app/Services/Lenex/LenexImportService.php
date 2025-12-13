@@ -49,7 +49,7 @@ class LenexImportService
     /**
      * XML aus .xml/.lef oder .lxf/.zip lesen.
      */
-    protected function readLenexXml(string $path): string
+    public function readLenexXml(string $path): string
     {
         if (!is_file($path)) {
             throw new RuntimeException("Datei nicht gefunden: {$path}");
@@ -69,16 +69,29 @@ class LenexImportService
         // LXF or ZIP → zip öffnen und erste .lef/.xml extrahieren
         if (in_array($ext, ['lxf', 'zip'], true)) {
             $zip = new ZipArchive();
-            if ($zip->open($path) !== true) {
-                throw new RuntimeException("LXF/ZIP-Datei konnte nicht geöffnet werden: {$path}");
+            $res = $zip->open($path, ZipArchive::RDONLY);
+
+            if ($res !== true) {
+                // Fallback: manche .lxf sind in Wahrheit plain XML
+                $raw = @file_get_contents($path);
+                if ($raw !== false && stripos($raw, '<lenex') !== false) {
+                    return $raw;
+                }
+
+                throw new RuntimeException(
+                    "LXF/ZIP-Datei konnte nicht geöffnet werden (ZipArchive Code {$res}): {$path}"
+                );
             }
 
             $xml = null;
             for ($i = 0; $i < $zip->numFiles; $i++) {
                 $name = $zip->getNameIndex($i);
-                $lower = strtolower($name);
+                if (!$name) {
+                    continue;
+                }
 
-                if (str_ends_with($lower, '.lef') || str_ends_with($lower, '.xml')) {
+                $lowerName = strtolower($name);
+                if (str_ends_with($lowerName, '.lef') || str_ends_with($lowerName, '.xml')) {
                     $xml = $zip->getFromIndex($i);
                     break;
                 }
@@ -92,6 +105,7 @@ class LenexImportService
 
             return $xml;
         }
+
 
         throw new RuntimeException("Nicht unterstützte LENEX-Erweiterung: {$ext}");
     }

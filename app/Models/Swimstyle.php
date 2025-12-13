@@ -2,18 +2,16 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Swimstyle extends Model
 {
-    use HasFactory;
-
     protected $table = 'swimstyles';
 
     protected $guarded = [];
 
-    public function events()
+    public function events(): HasMany
     {
         return $this->hasMany(ParaEvent::class, 'swimstyle_id');
     }

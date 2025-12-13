@@ -12,18 +12,6 @@ class ParaEntry extends Model
 
     protected $guarded = [];
 
-    public function athlete(): BelongsTo
-    {
-        // FK: para_athlete_id (laut Tinker gesetzt)
-        return $this->belongsTo(ParaAthlete::class, 'para_athlete_id');
-    }
-
-    public function club(): BelongsTo
-    {
-        // FK: para_club_id (laut Tinker gesetzt)
-        return $this->belongsTo(ParaClub::class, 'para_club_id');
-    }
-
     public function event(): BelongsTo
     {
         return $this->belongsTo(ParaEvent::class, 'para_event_id');
@@ -44,15 +32,26 @@ class ParaEntry extends Model
         return $this->hasMany(ParaResult::class, 'para_entry_id');
     }
 
-    // Falls irgendwo im Code bereits paraAthlete/paraClub verwendet wird,
-    // führen wir die einfach auf die neuen Relationen zurück:
     public function paraAthlete(): BelongsTo
     {
         return $this->athlete();
     }
 
+    public function athlete(): BelongsTo
+    {
+        return $this->belongsTo(ParaAthlete::class, 'para_athlete_id');
+    }
+
+    // Falls irgendwo im Code bereits paraAthlete/paraClub verwendet wird,
+    // führen wir die einfach auf die neuen Relationen zurück:
+
     public function paraClub(): BelongsTo
     {
         return $this->club();
+    }
+
+    public function club(): BelongsTo
+    {
+        return $this->belongsTo(ParaClub::class, 'para_club_id');
     }
 }

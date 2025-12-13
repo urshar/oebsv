@@ -35,6 +35,9 @@ class ParaClub extends Model
         return $this->hasMany(ParaAthlete::class, 'para_club_id');
     }
 
-    // Falls du später eine Verbindung zu ParaMeet herstellst (z.B. club_meet Pivot),
-    // kannst du hier ein belongsToMany ergänzen.
+    public function relayEntries(): HasMany
+    {
+        return $this->hasMany(ParaRelayEntry::class, 'para_club_id');
+    }
+
 }

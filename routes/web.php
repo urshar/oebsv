@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ContinentController;
 use App\Http\Controllers\LenexImportController;
+use App\Http\Controllers\LenexRelayImportController;
 use App\Http\Controllers\MeetAthleteController;
 use App\Http\Controllers\NationController;
 use App\Http\Controllers\ParaAthleteClassificationController;
@@ -12,6 +13,11 @@ use App\Http\Controllers\ParaEventController;
 use App\Http\Controllers\ParaMeetController;
 use App\Http\Controllers\ParaRecordImportCandidateController;
 use App\Http\Controllers\ParaRecordImportController;
+use App\Http\Controllers\ParaRelayEntryController;
+use App\Http\Controllers\ParaRelayLegSplitController;
+use App\Http\Controllers\ParaRelayMemberController;
+use App\Http\Controllers\ParaRelayResultController;
+use App\Http\Controllers\ParaRelaySplitController;
 use App\Http\Controllers\ParaSessionController;
 use Illuminate\Support\Facades\Route;
 
@@ -91,7 +97,49 @@ Route::prefix('meets/{meet}')
 
                 Route::post('results/import', [LenexImportController::class, 'importResults'])
                     ->name('results.import');      // Bestätigung + eigentlicher Import
+
+                // RELAYS-Import (3-stufig: Upload -> Preview -> Import)
+                Route::get('relays', [LenexRelayImportController::class, 'create'])
+                    ->name('relays.form');
+
+                Route::post('relays/preview', [LenexRelayImportController::class, 'preview'])
+                    ->name('relays.preview');
+
+                Route::post('relays/import', [LenexRelayImportController::class, 'import'])
+                    ->name('relays.import');
+
             });
+
+        /*
+|--------------------------------------------------------------
+| Relays (Staffeln) – CRUD
+|--------------------------------------------------------------
+*/
+
+        // Relay Entries (index/create/store/show/edit/update/destroy)
+        Route::resource('relay-entries', ParaRelayEntryController::class);
+
+        // Relay Results (Team-Endzeit etc.)
+        // create/store nested unter relay-entries, edit/update/destroy "shallow"
+        Route::resource('relay-entries.relay-results', ParaRelayResultController::class)
+            ->shallow()
+            ->only(['create', 'store', 'edit', 'update', 'destroy']);
+
+        // Relay Members (Teilnehmer/Legs)
+        // create/store nested unter relay-entries, edit/update/destroy "shallow"
+        Route::resource('relay-entries.relay-members', ParaRelayMemberController::class)
+            ->shallow()
+            ->only(['create', 'store', 'edit', 'update', 'destroy']);
+
+        // Team-Splits (roh, kumuliert ab Start) – nested unter relay-results
+        Route::resource('relay-results.relay-splits', ParaRelaySplitController::class)
+            ->shallow()
+            ->only(['index', 'store', 'edit', 'update', 'destroy']);
+
+        // Leg-Splits (pro Teilnehmer/Leg) – nested unter relay-members
+        Route::resource('relay-members.relay-leg-splits', ParaRelayLegSplitController::class)
+            ->shallow()
+            ->only(['index', 'store', 'edit', 'update', 'destroy']);
 
         /*
         |--------------------------------------------------------------

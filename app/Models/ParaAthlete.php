@@ -64,24 +64,6 @@ class ParaAthlete extends Model
             ?? $this->sportclass_sm;
     }
 
-    public function classifications(): HasMany
-    {
-        return $this->hasMany(ParaAthleteClassification::class, 'para_athlete_id')
-            ->orderByDesc('classification_date')
-            ->orderByDesc('id');
-    }
-
-    /**
-     * Komfort: aktive / letzte Klassifikation.
-     * (Jüngste nach Datum; falls es keine gibt, null)
-     */
-    public function activeClassification(): ?ParaAthleteClassification
-    {
-        return $this->classifications()
-            ->orderByDesc('classification_date')
-            ->first();
-    }
-
     /**
      * Synchronisiert die sportclass_* Felder des Athleten
      * mit der aktuell aktiven Klassifikation.
@@ -129,6 +111,24 @@ class ParaAthlete extends Model
         }
     }
 
+    /**
+     * Komfort: aktive / letzte Klassifikation.
+     * (Jüngste nach Datum; falls es keine gibt, null)
+     */
+    public function activeClassification(): ?ParaAthleteClassification
+    {
+        return $this->classifications()
+            ->orderByDesc('classification_date')
+            ->first();
+    }
+
+    public function classifications(): HasMany
+    {
+        return $this->hasMany(ParaAthleteClassification::class, 'para_athlete_id')
+            ->orderByDesc('classification_date')
+            ->orderByDesc('id');
+    }
+
     public function results(): HasManyThrough
     {
         return $this->hasManyThrough(
@@ -141,5 +141,9 @@ class ParaAthlete extends Model
         );
     }
 
-    // Später: Meldungen / Ergebnisse-Relationen (entries, results) kannst du hier anhängen.
+    public function relayMembers(): HasMany
+    {
+        return $this->hasMany(ParaRelayMember::class, 'para_athlete_id');
+    }
+
 }

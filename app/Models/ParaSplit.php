@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\SwimTime;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -18,7 +19,7 @@ class ParaSplit extends Model
 
     public function getTimeFormattedAttribute(): string
     {
-        return format_swim_time($this->time_ms);
+        return SwimTime::format($this->time_ms);
     }
 
 }
