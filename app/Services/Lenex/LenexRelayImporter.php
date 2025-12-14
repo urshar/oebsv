@@ -5,14 +5,7 @@ namespace App\Services\Lenex;
 use App\Models\ParaAthlete;
 use App\Models\ParaClub;
 use App\Models\ParaEntry;
-use App\Models\ParaEvent;
 use App\Models\ParaMeet;
-use App\Models\ParaRelayEntry;
-use App\Models\ParaRelayLegSplit;
-use App\Models\ParaRelayMember;
-use App\Models\ParaRelayResult;
-use App\Models\ParaRelaySplit;
-use App\Support\SwimTime;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
@@ -22,36 +15,36 @@ use Throwable;
 class LenexRelayImporter
 {
     public function __construct(
-        protected LenexImportService $lenexImportService
+        protected LenexImportService $lenex,
     ) {
     }
 
     /**
-     * Importiert ausgewählte Relay-RESULTs aus einem LENEX File.
+     * Importiert ausgewählte Relay-Results (Staffeln).
      *
-     * @param  string  $filePath  Pfad zur hochgeladenen .lef/.lxf/.zip Datei
-     * @param  ParaMeet  $meet  Meet im System
-     * @param  string[]  $selectedLenexResultIds  Array von LENEX RESULT@resultid (aus Preview)
-     * @throws Throwable
+     * $selectedResultKeys enthält resultid (LENEX) oder den Fallback-Key aus dem Preview:
+     *   resultid ?: "{eventid}|{relayNumber}|{clubName}"
      */
-    public function import(string $filePath, ParaMeet $meet, array $selectedLenexResultIds): void
+    public function import(string $path, ParaMeet $meet, array $selectedResultKeys): void
     {
-        $selectedSet = array_flip(array_values(array_filter($selectedLenexResultIds)));
-        if (empty($selectedSet)) {
-            throw new RuntimeException('Keine Staffeln für den Import ausgewählt.');
-        }
+        $selected = array_fill_keys(array_map('strval', $selectedResultKeys), true);
 
-        // ✅ zentraler Loader aus deinem LenexImportService
-        $root = $this->lenexImportService->loadLenexRootFromPath($filePath);
+        $root = $this->lenex->loadLenexRootFromPath($path);
 
-        /** @var SimpleXMLElement|null $meetNode */
         $meetNode = $root->MEETS->MEET[0] ?? null;
         if (!$meetNode instanceof SimpleXMLElement) {
-            throw new RuntimeException('Keine MEET-Definition im LENEX gefunden.');
+            throw new RuntimeException('Keine MEET-Definition im LENEX gefunden (Relays).');
         }
 
-        // Map: LENEX eventid -> ParaEvent (nur Events vom Meet)
-        $meet->load('sessions.events.swimstyle');
+        if (!Schema::hasTable('para_relay_entries')) {
+            throw new RuntimeException('Tabelle para_relay_entries fehlt. Bitte migrations für Relays anlegen.');
+        }
+        if (!Schema::hasTable('para_relay_members')) {
+            // optional, aber strongly empfohlen
+            throw new RuntimeException('Tabelle para_relay_members fehlt. Bitte migrations für Relay-Members anlegen.');
+        }
+
+        $meet->load('sessions.events.swimstyle', 'sessions.events.agegroups');
 
         $eventByLenexId = [];
         foreach ($meet->sessions as $session) {
@@ -62,292 +55,249 @@ class LenexRelayImporter
             }
         }
 
-        // HeatId -> Heat number
-        $heatNumberById = $this->buildHeatNumberIndex($meetNode);
-
-        // ResultId -> place (Ranking; wenn mehrfach, nehmen wir das kleinste "order")
-        $rankByResultId = $this->buildRankingIndex($meetNode);
-
-        DB::transaction(function () use (
-            $meetNode,
-            $meet,
-            $selectedSet,
-            $eventByLenexId,
-            $heatNumberById,
-            $rankByResultId
-        ) {
+        DB::transaction(function () use ($meet, $meetNode, $selected, $eventByLenexId) {
             foreach (($meetNode->CLUBS->CLUB ?? []) as $clubNode) {
-                /** @var SimpleXMLElement $clubNode */
-                $lenexClubId = (string) ($clubNode['clubid'] ?? '');
                 $clubName = trim((string) ($clubNode['name'] ?? ''));
+                $lenexClubId = (string) ($clubNode['clubid'] ?? '');
 
-                // Club muss im System existieren (wir legen hier NICHT an)
-                $club = ParaClub::findByLenexOrName($lenexClubId, $clubName);
-
-                if (!$club) {
-                    // Preview sollte diese sowieso rot markieren; beim Import überspringen wir.
-                    continue;
-                }
-
-                // LENEX-Athletes dieses Clubs indexieren (LENEX-Clubzugehörigkeit prüfen)
-                $athNodeById = [];
-                foreach (($clubNode->ATHLETES->ATHLETE ?? []) as $athNode) {
-                    $aid = (string) ($athNode['athleteid'] ?? '');
-                    if ($aid !== '') {
-                        $athNodeById[$aid] = $athNode;
-                    }
-                }
+                $dbClub = $this->findClub($lenexClubId, $clubName);
 
                 foreach (($clubNode->RELAYS->RELAY ?? []) as $relayNode) {
-                    /** @var SimpleXMLElement $relayNode */
-                    $relayNumber = (string) ($relayNode['number'] ?? null);
-                    $relayGender = (string) ($relayNode['gender'] ?? null);
+                    $relayNumber = (int) ($relayNode['number'] ?? 0);
+                    $relayGender = (string) ($relayNode['gender'] ?? '');
 
-                    foreach (($relayNode->RESULTS->RESULT ?? []) as $resultNode) {
-                        /** @var SimpleXMLElement $resultNode */
-                        $lenexResultId = (string) ($resultNode['resultid'] ?? '');
+                    foreach (($relayNode->RESULTS->RESULT ?? []) as $resNode) {
+                        $lenexEventId = (string) ($resNode['eventid'] ?? '');
+                        $lenexResultId = (string) ($resNode['resultid'] ?? '');
 
-                        // Auswahlfilter
-                        if ($lenexResultId === '' || !isset($selectedSet[$lenexResultId])) {
+                        $key = $lenexResultId ?: ($lenexEventId.'|'.$relayNumber.'|'.$clubName);
+
+                        if (!isset($selected[$key])) {
                             continue;
                         }
 
-                        $lenexEventId = (string) ($resultNode['eventid'] ?? '');
-                        /** @var ParaEvent|null $event */
                         $event = $lenexEventId !== '' ? ($eventByLenexId[$lenexEventId] ?? null) : null;
-
                         if (!$event) {
-                            throw new RuntimeException("Relay Result {$lenexResultId}: Event {$lenexEventId} nicht im Meeting vorhanden.");
+                            continue; // Preview sollte invalid sein
                         }
 
-                        // Leg distance & relaycount kommen aus LENEX (nicht von DB abhängen)
-                        [$legDistance, $relayCount, $eventStroke] = $this->readRelayMetaFromLenexMeet($meetNode,
-                            $lenexEventId);
-
-                        if ($relayCount <= 1) {
-                            throw new RuntimeException("Relay Result {$lenexResultId}: Event {$lenexEventId} ist kein Relay (relaycount<=1).");
-                        }
-                        if ($legDistance <= 0) {
-                            throw new RuntimeException("Relay Result {$lenexResultId}: Konnte distance nicht aus LENEX bestimmen.");
+                        if (!$dbClub) {
+                            continue; // Preview invalid
                         }
 
-                        $totalDistance = $legDistance * $relayCount;
+                        $swimtimeStr = (string) ($resNode['swimtime'] ?? '');
+                        $timeMs = $this->lenex->parseTimeToMs($swimtimeStr);
 
-                        // Entry/Swimtime
-                        $entryTimeStr = (string) ($resultNode['entrytime'] ?? '');
-                        $entryTimeMs = SwimTime::parseToMs($entryTimeStr);
+                        $agegroupId = trim((string) ($resNode['agegroupid'] ?? ''));
 
-                        $swimTimeStr = (string) ($resultNode['swimtime'] ?? '');
-                        $swimTimeMs = SwimTime::parseToMs($swimTimeStr);
+                        $paraEventAgegroupId = null;
+                        if ($agegroupId !== '' && isset($event->agegroups)) {
+                            foreach ($event->agegroups as $ag) {
+                                if ((string) ($ag->lenex_agegroupid ?? '') === $agegroupId) {
+                                    $paraEventAgegroupId = $ag->id;
+                                    break;
+                                }
+                            }
+                        }
 
-                        $heatId = (string) ($resultNode['heatid'] ?? '');
-                        $heatNumber = $heatId !== '' ? ($heatNumberById[$heatId] ?? null) : null;
+                        // 1) relay entry upsert
+                        $where = [
+                            'para_meet_id' => $meet->id,
+                        ];
 
-                        $rank = $rankByResultId[$lenexResultId] ?? null;
+                        if (Schema::hasColumn('para_relay_entries', 'lenex_resultid') && $lenexResultId !== '') {
+                            $where['lenex_resultid'] = $lenexResultId;
+                        } else {
+                            // Fallback
+                            $where += [
+                                'para_event_id' => $event->id,
+                                'para_club_id' => $dbClub->id,
+                                'relay_number' => $relayNumber,
+                            ];
+                        }
 
-                        // 1) RelayEntry upsert
-                        $relayEntry = ParaRelayEntry::updateOrCreate(
-                            [
+                        $data = $this->filterColumns('para_relay_entries', array_filter([
+                            'para_meet_id' => $meet->id,
+                            'para_session_id' => $event->para_session_id ?? null,
+                            'para_event_id' => $event->id,
+                            'para_event_agegroup_id' => $paraEventAgegroupId,
+                            'para_club_id' => $dbClub->id,
+                            'swimstyle_id' => $event->swimstyle_id ?? null,
+
+                            'lenex_eventid' => $lenexEventId ?: null,
+                            'lenex_resultid' => $lenexResultId ?: null,
+                            'relay_number' => $relayNumber ?: null,
+                            'relay_gender' => $relayGender ?: null,
+
+                            'time' => $swimtimeStr ?: null,
+                            'time_ms' => $timeMs,
+                        ], fn($v) => $v !== null));
+
+                        DB::table('para_relay_entries')->updateOrInsert($where, $data);
+
+                        // relay entry id holen
+                        $relayEntryId = DB::table('para_relay_entries')->where($where)->value('id');
+                        if (!$relayEntryId) {
+                            throw new RuntimeException('Konnte para_relay_entries id nicht ermitteln.');
+                        }
+
+                        // 2) Mitglieder upsert
+                        $members = [];
+                        $leg = 1;
+                        foreach (($relayNode->POSITIONS->POSITION ?? []) as $posNode) {
+                            $lenexAthleteId = (string) ($posNode['athleteid'] ?? '');
+                            $first = trim((string) ($posNode['firstname'] ?? $posNode['givenname'] ?? ''));
+                            $last = trim((string) ($posNode['lastname'] ?? $posNode['familyname'] ?? ''));
+
+                            $dbAthlete = $this->findAthleteByLenexOrEntry($meet, $lenexAthleteId, $first, $last);
+
+                            $mWhere = ['para_relay_entry_id' => $relayEntryId, 'leg' => $leg];
+                            $mData = $this->filterColumns('para_relay_members', array_filter([
+                                'para_relay_entry_id' => $relayEntryId,
+                                'leg' => $leg,
+                                'para_athlete_id' => $dbAthlete?->id,
+                                'lenex_athleteid' => $lenexAthleteId ?: null,
+                                'first_name' => $first ?: null,
+                                'last_name' => $last ?: null,
+                            ], fn($v) => $v !== null));
+
+                            DB::table('para_relay_members')->updateOrInsert($mWhere, $mData);
+
+                            $members[] = ['leg' => $leg, 'para_athlete_id' => $dbAthlete?->id];
+                            $leg++;
+                        }
+
+                        // 3) Splits importieren (wenn para_splits existiert + para_results existiert)
+                        if (Schema::hasTable('para_results') && Schema::hasTable('para_splits')) {
+
+                            // para_result für relay entry upsert/finden
+                            $rWhere = ['para_meet_id' => $meet->id];
+
+                            if (Schema::hasColumn('para_results', 'lenex_resultid') && $lenexResultId !== '') {
+                                $rWhere['lenex_resultid'] = $lenexResultId;
+                            } else {
+                                $rWhere += [
+                                    'para_event_id' => $event->id,
+                                    'para_club_id' => $dbClub->id,
+                                ];
+                            }
+
+                            $rData = $this->filterColumns('para_results', array_filter([
                                 'para_meet_id' => $meet->id,
                                 'para_event_id' => $event->id,
-                                'para_club_id' => $club->id,
-                                'lenex_relay_number' => $relayNumber,
-                            ],
-                            [
                                 'para_session_id' => $event->para_session_id ?? null,
+                                'para_event_agegroup_id' => $paraEventAgegroupId,
+                                'para_club_id' => $dbClub->id,
+                                'time' => $swimtimeStr ?: null,
+                                'time_ms' => $timeMs,
                                 'lenex_eventid' => $lenexEventId ?: null,
-                                'lenex_clubid' => $lenexClubId ?: null,
-                                'gender' => $relayGender ?: null,
-                                'entry_time' => $entryTimeStr ?: null,
-                                'entry_time_ms' => $entryTimeMs,
-                            ]
-                        );
-
-                        // 2) RelayResult upsert
-                        $relayResult = ParaRelayResult::updateOrCreate(
-                            [
-                                'para_relay_entry_id' => $relayEntry->id,
-                                'para_meet_id' => $meet->id,
-                            ],
-                            [
-                                'time_ms' => $swimTimeMs,
-                                'rank' => $rank,
-                                'heat' => $heatNumber,
-                                'lane' => isset($resultNode['lane']) ? (int) $resultNode['lane'] : null,
-                                'status' => (string) ($resultNode['status'] ?? 'OK'),
-                                'points' => isset($resultNode['points']) ? (int) $resultNode['points'] : null,
                                 'lenex_resultid' => $lenexResultId ?: null,
-                                'lenex_heatid' => $heatId ?: null,
-                            ]
-                        );
+                                'type' => 'relay',
+                            ], fn($v) => $v !== null));
 
-                        // 3) Members (Leg 1..n) – reimport-sicher: löschen & neu
-                        ParaRelayMember::where('para_relay_entry_id', $relayEntry->id)->delete();
+                            DB::table('para_results')->updateOrInsert($rWhere, $rData);
 
-                        $memberByLeg = [];
+                            $paraResultId = DB::table('para_results')->where($rWhere)->value('id');
+                            if ($paraResultId) {
+                                // Link back (wenn Spalte existiert)
+                                if (Schema::hasColumn('para_relay_entries', 'para_result_id')) {
+                                    DB::table('para_relay_entries')
+                                        ->where('id', $relayEntryId)
+                                        ->update(['para_result_id' => $paraResultId]);
+                                }
 
-                        $positions = $resultNode->RELAYPOSITIONS->RELAYPOSITION ?? [];
-                        if (count($positions) === 0) {
-                            throw new RuntimeException("Relay Result {$lenexResultId}: Keine RELAYPOSITIONS gefunden.");
+                                // Splits neu schreiben
+                                DB::table('para_splits')->where('para_result_id', $paraResultId)->delete();
+
+                                $splitIdx = 1;
+                                $splits = ($resNode->SPLITS->SPLIT ?? []);
+                                foreach ($splits as $i => $splitNode) {
+                                    $dist = isset($splitNode['distance']) ? (int) $splitNode['distance'] : null;
+                                    $tStr = (string) ($splitNode['swimtime'] ?? '');
+                                    $tMs = $this->lenex->parseTimeToMs($tStr);
+
+                                    // Leg-Mapping: häufig 1:1 mit split index
+                                    $paraAthleteId = $members[$splitIdx - 1]['para_athlete_id'] ?? null;
+
+                                    $sData = $this->filterColumns('para_splits', array_filter([
+                                        'para_result_id' => $paraResultId,
+                                        'split_index' => $splitIdx,
+                                        'leg' => $splitIdx,
+                                        'para_athlete_id' => $paraAthleteId,
+                                        'distance' => $dist,
+                                        'distance_m' => $dist,
+                                        'time' => $tStr ?: null,
+                                        'time_ms' => $tMs,
+                                    ], fn($v) => $v !== null));
+
+                                    DB::table('para_splits')->insert($sData);
+                                    $splitIdx++;
+                                }
+                            }
                         }
-
-                        foreach ($positions as $posNode) {
-                            /** @var SimpleXMLElement $posNode */
-                            $lenexAthleteId = (string) ($posNode['athleteid'] ?? '');
-                            $leg = isset($posNode['number']) ? (int) $posNode['number'] : null;
-
-                            if (!$leg || $lenexAthleteId === '') {
-                                throw new RuntimeException("Relay Result {$lenexResultId}: Ungültige RELAYPOSITION (leg/athleteid fehlt).");
-                            }
-
-                            // Muss in ATHLETES des Clubs im LENEX vorkommen
-                            if (!isset($athNodeById[$lenexAthleteId])) {
-                                throw new RuntimeException("Relay Result {$lenexResultId}: Athlete {$lenexAthleteId} gehört im LENEX nicht zu Club {$clubName}.");
-                            }
-
-                            $athNode = $athNodeById[$lenexAthleteId];
-
-                            // Athlete im System finden
-                            $dbAthlete = $this->findAthleteInDb($lenexAthleteId, $athNode);
-                            if (!$dbAthlete) {
-                                throw new RuntimeException("Relay Result {$lenexResultId}: Athlete {$lenexAthleteId} nicht in para_athletes gefunden.");
-                            }
-
-                            // Athlete muss im System dem Club zugeordnet sein
-                            if ((int) $dbAthlete->para_club_id !== (int) $club->id) {
-                                throw new RuntimeException("Relay Result {$lenexResultId}: Athlete {$dbAthlete->id} ist im System bei anderem Club.");
-                            }
-
-                            $member = ParaRelayMember::create([
-                                'para_relay_entry_id' => $relayEntry->id,
-                                'para_athlete_id' => $dbAthlete->id,
-                                'leg' => $leg,
-                                'lenex_athleteid' => $lenexAthleteId,
-                                'leg_time_ms' => null, // setzen wir unten aus Splits
-                                'leg_distance' => $legDistance,
-                                'leg_stroke' => $this->resolveLegStroke($eventStroke, $leg, $relayCount),
-                            ]);
-
-                            $memberByLeg[$leg] = $member;
-                        }
-
-                        // 4) Team-Splits speichern + cumulative-index bauen (inkl. final time)
-                        ParaRelaySplit::where('para_relay_result_id', $relayResult->id)->delete();
-
-                        $teamCum = $this->persistTeamSplitsAndBuildCumulativeIndex(
-                            $relayResult->id,
-                            $resultNode,
-                            $totalDistance,
-                            $swimTimeStr,
-                            $swimTimeMs
-                        );
-
-                        // 5) Leg-Splits pro Member ableiten & leg_time_ms setzen
-                        foreach ($memberByLeg as $m) {
-                            ParaRelayLegSplit::where('para_relay_member_id', $m->id)->delete();
-                        }
-
-                        $this->persistLegSplitsAndSetLegTimes(
-                            $memberByLeg,
-                            $teamCum,
-                            $legDistance,
-                            $relayCount
-                        );
                     }
                 }
             }
         });
     }
 
-    // ------------------------------------------------------------
-    // LENEX helpers
-    // ------------------------------------------------------------
-
-    private function buildHeatNumberIndex(SimpleXMLElement $meetNode): array
+    private function findClub(string $lenexClubId, string $clubName): ?ParaClub
     {
-        $map = [];
-        foreach (($meetNode->SESSIONS->SESSION ?? []) as $sessionNode) {
-            foreach (($sessionNode->EVENTS->EVENT ?? []) as $eventNode) {
-                foreach (($eventNode->HEATS->HEAT ?? []) as $heatNode) {
-                    $heatId = (string) ($heatNode['heatid'] ?? '');
-                    if ($heatId !== '') {
-                        $map[$heatId] = (int) ($heatNode['number'] ?? 0);
-                    }
-                }
-            }
-        }
-        return $map;
-    }
+        $q = ParaClub::query();
 
-    private function buildRankingIndex(SimpleXMLElement $meetNode): array
-    {
-        $map = [];      // resultid => place
-        $bestOrder = []; // resultid => min order
-
-        foreach (($meetNode->SESSIONS->SESSION ?? []) as $sessionNode) {
-            foreach (($sessionNode->EVENTS->EVENT ?? []) as $eventNode) {
-                foreach (($eventNode->AGEGROUPS->AGEGROUP ?? []) as $agNode) {
-                    foreach (($agNode->RANKINGS->RANKING ?? []) as $rankingNode) {
-                        $resultId = (string) ($rankingNode['resultid'] ?? '');
-                        if ($resultId === '') {
-                            continue;
-                        }
-
-                        $order = (int) ($rankingNode['order'] ?? 999999);
-                        $place = isset($rankingNode['place']) ? (int) $rankingNode['place'] : null;
-
-                        if (!isset($bestOrder[$resultId]) || $order < $bestOrder[$resultId]) {
-                            $bestOrder[$resultId] = $order;
-                            $map[$resultId] = $place;
-                        }
-                    }
-                }
+        if ($lenexClubId !== '' && Schema::hasColumn('para_clubs', 'lenex_clubid')) {
+            $club = (clone $q)->where('lenex_clubid', $lenexClubId)->first();
+            if ($club) {
+                return $club;
             }
         }
 
-        return $map;
+        if ($clubName === '') {
+            return null;
+        }
+
+        return $q->where(function ($qq) use ($clubName) {
+            $qq->where('nameDe', $clubName)
+                ->orWhere('shortNameDe', $clubName)
+                ->orWhere('nameEn', $clubName)
+                ->orWhere('shortNameEn', $clubName);
+        })->first();
     }
 
-    // ------------------------------------------------------------
-    // Mapping helpers (Club/Athlete)
-    // ------------------------------------------------------------
-
-    /**
-     * Liest aus LENEX die SWIMSTYLE meta für eventid:
-     * - distance (pro Leg!)
-     * - relaycount
-     * - stroke
-     *
-     * @return array{0:int,1:int,2:string|null}
-     */
-    private function readRelayMetaFromLenexMeet(SimpleXMLElement $meetNode, string $lenexEventId): array
+    private function filterColumns(string $table, array $data): array
     {
-        foreach (($meetNode->SESSIONS->SESSION ?? []) as $sessionNode) {
-            foreach (($sessionNode->EVENTS->EVENT ?? []) as $eventNode) {
-                if ((string) ($eventNode['eventid'] ?? '') !== $lenexEventId) {
-                    continue;
-                }
+        $cols = null;
+        try {
+            $cols = Schema::getColumnListing($table);
+        } catch (Throwable) {
+            return $data;
+        }
 
-                $ss = $eventNode->SWIMSTYLE ?? null;
-                if (!$ss instanceof SimpleXMLElement) {
-                    return [0, 0, null];
-                }
+        $allowed = array_fill_keys($cols, true);
 
-                $distance = (int) ($ss['distance'] ?? 0);     // pro Leg
-                $relaycount = (int) ($ss['relaycount'] ?? 0);
-                $stroke = (string) ($ss['stroke'] ?? '');
+        return array_filter(
+            $data,
+            fn($v, $k) => isset($allowed[$k]),
+            ARRAY_FILTER_USE_BOTH
+        );
+    }
 
-                return [$distance, $relaycount, $stroke ?: null];
+    private function findAthleteByLenexOrEntry(
+        ParaMeet $meet,
+        string $lenexAthleteId,
+        string $first,
+        string $last
+    ): ?ParaAthlete {
+        if ($lenexAthleteId !== '' && Schema::hasColumn('para_athletes', 'lenex_athleteid')) {
+            $a = ParaAthlete::query()->where('lenex_athleteid', $lenexAthleteId)->first();
+            if ($a) {
+                return $a;
             }
         }
-        return [0, 0, null];
-    }
 
-    private function findAthleteInDb(string $lenexAthleteId, SimpleXMLElement $athNode): ?ParaAthlete
-    {
-        // 1) Prefer: Mapping über ParaEntry.lenex_athleteid (exists in deinem Projekt)
-        if (Schema::hasColumn('para_entries', 'lenex_athleteid')) {
+        if ($lenexAthleteId !== '') {
             $entry = ParaEntry::query()
+                ->where('para_meet_id', $meet->id)
                 ->where('lenex_athleteid', $lenexAthleteId)
                 ->with('athlete')
                 ->first();
@@ -357,222 +307,13 @@ class LenexRelayImporter
             }
         }
 
-        // 2) Fallback: match by name (+ optional birthdate)
-        $first = trim((string) ($athNode['firstname'] ?? $athNode['givenname'] ?? ''));
-        $last = trim((string) ($athNode['lastname'] ?? $athNode['familyname'] ?? ''));
-        $birthdate = trim((string) ($athNode['birthdate'] ?? ''));
-
-        if ($first === '' || $last === '') {
-            return null;
+        if ($first !== '' && $last !== '') {
+            return ParaAthlete::query()
+                ->whereRaw('LOWER(firstName) = ?', [mb_strtolower($first)])
+                ->whereRaw('LOWER(lastName) = ?', [mb_strtolower($last)])
+                ->first();
         }
 
-        $q = ParaAthlete::query()
-            ->whereRaw('LOWER(firstName) = ?', [mb_strtolower($first)])
-            ->whereRaw('LOWER(lastName) = ?', [mb_strtolower($last)]);
-
-        if ($birthdate !== '') {
-            $q->whereDate('birthdate', $birthdate);
-        }
-
-        return $q->first();
+        return null;
     }
-
-    // ------------------------------------------------------------
-    // Splits logic
-    // ------------------------------------------------------------
-
-    private function resolveLegStroke(?string $eventStroke, int $leg, int $relayCount): ?string
-    {
-        if (!$eventStroke) {
-            return null;
-        }
-
-        $stroke = strtoupper($eventStroke);
-
-        // Standard Medley mapping (4 legs)
-        if ($stroke === 'MEDLEY' && $relayCount === 4) {
-            return match ($leg) {
-                1 => 'BACK',
-                2 => 'BREAST',
-                3 => 'FLY',
-                4 => 'FREE',
-                default => 'MEDLEY',
-            };
-        }
-
-        return $stroke;
-    }
-
-    /**
-     * Speichert Team-Splits (roh) und gibt ein cumulative-index zurück:
-     * distance => cumulative_time_ms
-     *
-     * LENEX liefert oft nur Zwischenpunkte (z.B. 50/100/150) und Endzeit als RESULT@swimtime.
-     * Daher ergänzen wir immer den finalen Punkt (totalDistance), wenn swimtime vorhanden ist.
-     *
-     * @return array<int,int> distance => cumulative_time_ms
-     */
-    private function persistTeamSplitsAndBuildCumulativeIndex(
-        int $relayResultId,
-        SimpleXMLElement $resultNode,
-        int $totalDistance,
-        string $finalSwimTimeStr,
-        ?int $finalSwimTimeMs
-    ): array {
-        $cum = [];
-        $points = [];
-
-        // <SPLITS><SPLIT distance=".." swimtime=".."/></SPLITS>
-        $splitNodes = $resultNode->SPLITS->SPLIT ?? [];
-        foreach ($splitNodes as $sp) {
-            $d = (int) ($sp['distance'] ?? 0);
-            $tStr = (string) ($sp['swimtime'] ?? '');
-            $tMs = SwimTime::parseToMs($tStr);
-
-            if ($d > 0 && $tMs !== null) {
-                $points[$d] = ['ms' => $tMs, 'raw' => $tStr];
-            }
-        }
-
-        // finalen Punkt ergänzen
-        if ($totalDistance > 0 && $finalSwimTimeMs !== null) {
-            $points[$totalDistance] = ['ms' => $finalSwimTimeMs, 'raw' => $finalSwimTimeStr];
-        }
-
-        if (empty($points)) {
-            // trotzdem Startpunkt definieren, damit Leg-Calc nicht crasht
-            return [0 => 0];
-        }
-
-        ksort($points);
-
-        $prevMs = 0;
-        $prevDist = 0;
-
-        // Startpunkt 0
-        $cum[0] = 0;
-
-        foreach ($points as $dist => $data) {
-            $ms = $data['ms'];
-            $raw = $data['raw'];
-
-            $splitMs = null;
-            if ($dist > $prevDist) {
-                $splitMs = $ms - $prevMs;
-                if ($splitMs < 0) {
-                    $splitMs = null;
-                }
-            }
-
-            ParaRelaySplit::create([
-                'para_relay_result_id' => $relayResultId,
-                'distance' => $dist,
-                'cumulative_time_ms' => $ms,
-                'split_time_ms' => $splitMs,
-                'lenex_swimtime' => $raw ?: null,
-            ]);
-
-            $cum[$dist] = $ms;
-            $prevMs = $ms;
-            $prevDist = $dist;
-        }
-
-        return $cum;
-    }
-
-    /**
-     * Leitet aus Team-cumulative (ab Start) die Leg-Splits (pro Member) ab.
-     * Setzt außerdem member.leg_time_ms.
-     *
-     * @param  array<int,ParaRelayMember>  $memberByLeg
-     * @param  array<int,int>  $teamCum  distance => cumulative_time_ms
-     */
-    private function persistLegSplitsAndSetLegTimes(
-        array $memberByLeg,
-        array $teamCum,
-        int $legDistance,
-        int $relayCount
-    ): void {
-        if ($legDistance <= 0 || $relayCount <= 0) {
-            return;
-        }
-
-        $distances = array_keys($teamCum);
-        sort($distances);
-
-        $getTime = fn(int $distance) => $teamCum[$distance] ?? null;
-
-        for ($leg = 1; $leg <= $relayCount; $leg++) {
-            $member = $memberByLeg[$leg] ?? null;
-            if (!$member) {
-                throw new RuntimeException("Relay: Missing member for leg {$leg}.");
-            }
-
-            $startDist = ($leg - 1) * $legDistance;
-            $endDist = $leg * $legDistance;
-
-            $startTime = $getTime($startDist);
-            $endTime = $getTime($endDist);
-
-            // startTime fallback: größte Distanz < startDist
-            if ($startTime === null) {
-                $startTime = 0;
-                foreach ($distances as $d) {
-                    if ($d < $startDist) {
-                        $startTime = $teamCum[$d];
-                    }
-                }
-            }
-
-            // endTime fallback: größte Distanz <= endDist
-            if ($endTime === null) {
-                $endTime = null;
-                foreach ($distances as $d) {
-                    if ($d <= $endDist) {
-                        $endTime = $teamCum[$d];
-                    }
-                }
-            }
-
-            if ($endTime === null) {
-                continue; // ohne Endzeit keine Leg-Time
-            }
-
-            $member->update([
-                'leg_time_ms' => max(0, $endTime - $startTime),
-            ]);
-
-            // Leg-splits: alle Team-splitpunkte innerhalb (startDist, endDist]
-            $prevLegCum = 0;
-
-            foreach ($distances as $absDist) {
-                if ($absDist <= $startDist) {
-                    continue;
-                }
-                if ($absDist > $endDist) {
-                    break;
-                }
-
-                $absTime = $teamCum[$absDist];
-                $legCum = $absTime - $startTime;
-                $distInLeg = $absDist - $startDist;
-
-                $splitMs = $legCum - $prevLegCum;
-                if ($splitMs < 0) {
-                    $splitMs = null;
-                }
-
-                ParaRelayLegSplit::create([
-                    'para_relay_member_id' => $member->id,
-                    'distance_in_leg' => $distInLeg,
-                    'cumulative_time_ms' => $legCum,
-                    'split_time_ms' => $splitMs,
-                    'absolute_distance' => $absDist,
-                ]);
-
-                $prevLegCum = $legCum;
-            }
-        }
-    }
-
 }

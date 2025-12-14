@@ -1,3 +1,7 @@
+@php
+    use App\Support\SwimTime;
+@endphp
+
 @extends('layouts.app')
 
 @section('content')
@@ -21,12 +25,11 @@
 
         <form method="POST" action="{{ route('meets.lenex.relays.import', $meet) }}">
             @csrf
+
             <input type="hidden" name="lenex_file_path" value="{{ $lenexFilePath }}">
 
-            <div class="d-flex gap-2 mb-3">
-                <button type="button" class="btn btn-sm btn-secondary" id="toggleAll">
-                    Alle gültigen auswählen / abwählen
-                </button>
+            <div class="d-flex gap-2 align-items-center mb-3">
+                <button type="button" id="toggleAll" class="btn btn-sm btn-outline-secondary">Alle umschalten</button>
                 <a class="btn btn-sm btn-link" href="{{ route('meets.lenex.relays.form', $meet) }}">Neue Datei</a>
             </div>
 
@@ -68,7 +71,24 @@
                                     </td>
 
                                     <td>
-                                        <div><strong>eventid:</strong> {{ $row['lenex_eventid'] ?: '—' }}</div>
+                                        <div>
+                                            <strong>{{ $row['relay_event_label'] }}</strong>
+                                            @if(!empty($row['relay_sportclass']))
+                                                <span
+                                                    class="badge bg-secondary ms-2">{{ $row['relay_sportclass'] }}</span>
+                                            @endif
+
+                                            @if(!empty($row['agegroup_name']))
+                                                <div class="text-muted small">{{ $row['agegroup_name'] }}</div>
+                                            @endif
+
+                                            <div class="text-muted small">
+                                                LENEX eventid: {{ $row['lenex_eventid'] ?? '—' }}
+                                                @if(!empty($row['swimstyle_id']))
+                                                    · swimstyle_id: {{ $row['swimstyle_id'] }}
+                                                @endif
+                                            </div>
+                                        </div>
                                     </td>
 
                                     <td>
@@ -77,7 +97,11 @@
                                         </div>
                                     </td>
 
-                                    <td>{{ $row['swimtime'] ?: '—' }}</td>
+                                    <td>
+                                        {{ $row['swimtime_ms'] !== null ? SwimTime::format($row['swimtime_ms']) : '—' }}
+                                        <div class="text-muted small">{{ $row['swimtime'] ?: '' }}</div>
+                                    </td>
+
 
                                     <td>
                                         @foreach($row['positions'] as $p)
@@ -86,11 +110,17 @@
                                                 {{ $p['last_name'] }}, {{ $p['first_name'] }}
                                                 <span
                                                     class="{{ (!$p['in_lenex_club'] || !$p['exists_in_db']) ? 'text-danger' : 'text-success' }}">
-                                                ({{ $p['lenex_athlete_id'] }})
-                                            </span>
+                                                    ({{ $p['lenex_athlete_id'] }})
+                                                </span>
                                                 @if($p['db_athlete_id'])
                                                     <small class="text-muted">DB#{{ $p['db_athlete_id'] }}</small>
                                                 @endif
+
+                                                @php $sc = $p['sport_class'] ?? null; @endphp
+                                                <span
+                                                    class="badge bg-light text-dark border ms-2 {{ $sc === null ? 'text-danger' : '' }}">
+                                                    SK {{ $sc ?? '—' }}
+                                                </span>
                                             </div>
                                         @endforeach
                                     </td>

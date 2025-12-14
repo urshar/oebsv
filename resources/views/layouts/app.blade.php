@@ -6,7 +6,7 @@
 
     <title>@yield('title', config('app.name', 'Para Swim Admin'))</title>
 
-    {{-- Bootstrap 5 CSS (for basic styling; optional but nice) --}}
+    {{-- Bootstrap 5 CSS --}}
     <link
         href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
         rel="stylesheet"
@@ -20,7 +20,6 @@
     @stack('styles')
 </head>
 <body>
-{{-- Simple header, no collapse, no JS required --}}
 <header class="bg-dark text-white mb-4">
     <div class="container d-flex justify-content-between align-items-center py-2">
         <div class="fw-bold">
@@ -29,42 +28,39 @@
             </a>
         </div>
 
+        @php $navMeet = request()->route('meet'); @endphp
+
         <nav class="d-flex gap-3">
-            <a href="{{ route('continents.index') }}"
-               class="text-white text-decoration-none {{ request()->is('continents*') ? 'fw-bold text-decoration-underline' : '' }}">
-                Kontinente
-            </a>
             <a href="{{ route('nations.index') }}"
                class="text-white text-decoration-none {{ request()->is('nations*') ? 'fw-bold text-decoration-underline' : '' }}">
                 Nationen
             </a>
-            <a href="{{ route('lenex.upload.form') }}"
-               class="text-white text-decoration-none {{ request()->is('lenex*') ? 'fw-bold text-decoration-underline' : '' }}">
-                LENEX Import
-            </a>
+
             <a href="{{ route('meets.index') }}"
                class="text-white text-decoration-none {{ request()->is('meets*') ? 'fw-bold text-decoration-underline' : '' }}">
                 Meets
             </a>
 
-            @php $navMeet = request()->route('meet'); @endphp
-            <a href="{{ $navMeet ? route('meets.lenex.relays.form', $navMeet) : route('meets.index') }}"
-               class="text-white text-decoration-none {{ request()->is('meets/*/lenex/relays*') ? 'fw-bold text-decoration-underline' : '' }}">
-                Relay Import
-            </a>
+            @if($navMeet)
+                <a href="{{ route('meets.lenex.results-wizard.form', $navMeet) }}"
+                   class="text-white text-decoration-none {{ request()->is('meets/*/lenex/results-wizard*') ? 'fw-bold text-decoration-underline' : '' }}">
+                    LENEX Wizard
+                </a>
+            @else
+                <span class="text-white-50 text-decoration-none">
+                    LENEX Wizard
+                </span>
+            @endif
+
             <a href="{{ route('athletes.index') }}"
                class="text-white text-decoration-none {{ request()->is('athletes*') ? 'fw-bold text-decoration-underline' : '' }}">
                 Athletes
             </a>
-            <a href="{{ route('classifiers.index') }}"
-               class="text-white text-decoration-none {{ request()->is('classifiers*') ? 'fw-bold text-decoration-underline' : '' }}">
-                Klassifier
-            </a>
+
             <a href="{{ route('para-records.index') }}"
                class="text-white text-decoration-none {{ request()->is('para-records*') ? 'fw-bold text-decoration-underline' : '' }}">
                 Records
             </a>
-
         </nav>
     </div>
 </header>

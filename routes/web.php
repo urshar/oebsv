@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ContinentController;
 use App\Http\Controllers\LenexImportController;
+use App\Http\Controllers\LenexMeetResultsWizardController;
 use App\Http\Controllers\LenexRelayImportController;
 use App\Http\Controllers\MeetAthleteController;
 use App\Http\Controllers\NationController;
@@ -108,6 +109,15 @@ Route::prefix('meets/{meet}')
                 Route::post('relays/import', [LenexRelayImportController::class, 'import'])
                     ->name('relays.import');
 
+                // NEU: Kombinierter Wizard
+                Route::get('results-wizard', [LenexMeetResultsWizardController::class, 'create'])
+                    ->name('results-wizard.form');
+
+                Route::post('results-wizard/preview', [LenexMeetResultsWizardController::class, 'preview'])
+                    ->name('results-wizard.preview');
+
+                Route::post('results-wizard/import', [LenexMeetResultsWizardController::class, 'import'])
+                    ->name('results-wizard.import');
             });
 
         /*
