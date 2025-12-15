@@ -11,6 +11,10 @@ class Swimstyle extends Model
 
     protected $guarded = [];
 
+    protected $casts = [
+        'is_relay' => 'boolean',
+    ];
+
     public function events(): HasMany
     {
         return $this->hasMany(ParaEvent::class, 'swimstyle_id');

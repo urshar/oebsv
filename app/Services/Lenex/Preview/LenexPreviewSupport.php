@@ -34,7 +34,9 @@ class LenexPreviewSupport
         $event = $lenexEventId !== '' ? ($eventByLenexId[$lenexEventId] ?? null) : null;
 
         $this->addMissingEvent($invalidReasons, $event, $lenexEventId);
-        $this->addMissingClub($invalidReasons, $dbClub);
+        if ($dbClub !== null) {
+            $this->addMissingClub($invalidReasons, $dbClub);
+        }
 
         return [
             'resultId' => $resultId,
@@ -93,5 +95,27 @@ class LenexPreviewSupport
     public function parseTimeToMs(?string $time): ?int
     {
         return $this->lenex->parseTimeToMs($time);
+    }
+
+    public function findAthleteByName(?string $first, ?string $last, ?string $birthdate = null): ?ParaAthlete
+    {
+        $first = trim((string) $first);
+        $last = trim((string) $last);
+
+        if ($first === '' || $last === '') {
+            return null;
+        }
+
+        $q = ParaAthlete::query()
+            ->with('club')
+            ->whereRaw('LOWER(firstName) = ?', [mb_strtolower($first)])
+            ->whereRaw('LOWER(lastName) = ?', [mb_strtolower($last)]);
+
+        $birthdate = trim((string) $birthdate);
+        if ($birthdate !== '') {
+            $q->whereDate('birthdate', $birthdate);
+        }
+
+        return $q->first();
     }
 }

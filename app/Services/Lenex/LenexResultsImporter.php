@@ -42,14 +42,7 @@ class LenexResultsImporter
             ->where('para_meet_id', $meet->id)
             ->get();
 
-        $entryByKey = [];
-        foreach ($entries as $e) {
-            $aid = (string) ($e->lenex_athleteid ?? '');
-            $eid = (string) ($e->lenex_eventid ?? '');
-            if ($aid !== '' && $eid !== '') {
-                $entryByKey[$aid.'|'.$eid] = $e;
-            }
-        }
+        $entryByKey = LenexEntryIndex::byAthleteEvent($entries);
 
         DB::transaction(function () use ($meet, $meetNode, $selected, $entryByKey) {
             foreach (($meetNode->CLUBS->CLUB ?? []) as $clubNode) {

@@ -2,9 +2,10 @@
 
 namespace App\Services\Lenex\Preview;
 
-use App\Models\ParaAthlete;
+use App\Models\ParaClub;
 use App\Models\ParaEntry;
 use App\Models\ParaMeet;
+use App\Services\Lenex\LenexEntryIndex;
 use App\Support\SwimTime;
 use SimpleXMLElement;
 
@@ -46,17 +47,10 @@ class LenexResultsPreviewService
         // DB: Entries index (meet + lenex_athleteid|lenex_eventid) => ParaEntry
         $entries = ParaEntry::query()
             ->where('para_meet_id', $meet->id)
-            ->with('athlete.club')
+            ->with(['athlete.club', 'club'])   // <- wichtig
             ->get();
 
-        $entryByAthEvent = [];
-        foreach ($entries as $e) {
-            $aid = (string) ($e->lenex_athleteid ?? '');
-            $eid = (string) ($e->lenex_eventid ?? '');
-            if ($aid !== '' && $eid !== '') {
-                $entryByAthEvent[$aid.'|'.$eid] = $e;
-            }
-        }
+        $entryByAthEvent = LenexEntryIndex::byAthleteEvent($entries);
 
         $clubs = [];
 
@@ -80,7 +74,7 @@ class LenexResultsPreviewService
                     /** @var SimpleXMLElement $resNode */
 
                     // ✅ kein Duplicate mehr: Result Context über Support
-                    $ctx = $this->support->initResultContext($resNode, $eventByLenexId, null);
+                    $ctx = $this->support->initResultContext($resNode, $eventByLenexId);
 
                     $resultId = $ctx['resultId'];
                     $lenexEventId = $ctx['lenexEventId'];
@@ -97,20 +91,23 @@ class LenexResultsPreviewService
                         $invalidReasons[] = 'Keine passende Meldung (para_entries) gefunden – bitte zuerst Entries importieren';
                     }
 
+                    if ($entry) {
+                        $entryClub = $entry->club ?? null;
+
+                        if (!$entryClub && !empty($entry->para_club_id)) {
+                            $entryClub = ParaClub::find($entry->para_club_id);
+                        }
+
+                        if (!$entryClub) {
+                            $invalidReasons[] = 'Verein der Meldung im System nicht gefunden (para_clubs)';
+                        }
+                    }
+
                     // Athlete match: prefer Entry->athlete, fallback by name (+ birthdate)
                     $dbAthlete = $entry?->athlete;
 
-                    if (!$dbAthlete && $first !== '' && $last !== '') {
-                        $q = ParaAthlete::query()
-                            ->with('club')
-                            ->whereRaw('LOWER(firstName) = ?', [mb_strtolower($first)])
-                            ->whereRaw('LOWER(lastName) = ?', [mb_strtolower($last)]);
-
-                        if ($birthdate !== '') {
-                            $q->whereDate('birthdate', $birthdate);
-                        }
-
-                        $dbAthlete = $q->first();
+                    if (!$dbAthlete) {
+                        $dbAthlete = $this->support->findAthleteByName($first, $last, $birthdate);
                     }
 
                     if (!$dbAthlete) {
