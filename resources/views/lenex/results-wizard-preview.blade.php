@@ -6,7 +6,9 @@
         $relaysClubs  = $doRelays  ? ($relaysData['clubs'] ?? [])  : [];
 
         // helper für stabile club keys
-        $clubKeyFn = fn($nation, $clubName) => md5(($nation ?? '').'|'.($clubName ?? ''));
+        $clubKeyFn = function ($nation, $clubName) {
+            return md5(((string)($nation ?? '')) . '|' . ((string)($clubName ?? '')));
+        };
 
         // Tree: Results -> Nation -> Club -> Athletes
         $resultsTree = collect($resultsClubs)
@@ -123,7 +125,9 @@
 
                                                 <div class="ms-4 mt-2">
                                                     @foreach($clubs as $club)
-                                                        @php($clubKey = $club['club_key'])
+                                                        @php
+                                                            $clubKey = $club['club_key'];
+                                                        @endphp
                                                         <details class="mb-2" open>
                                                             <summary class="d-flex align-items-center gap-2">
                                                                 <input type="checkbox"
@@ -178,7 +182,9 @@
 
                                                 <div class="ms-4 mt-2">
                                                     @foreach($clubs as $club)
-                                                        @php($clubKey = $club['club_key'])
+                                                        @php
+                                                            $clubKey = $club['club_key'];
+                                                        @endphp
                                                         <details class="mb-2" open>
                                                             <summary class="d-flex align-items-center gap-2">
                                                                 <input type="checkbox"
@@ -325,7 +331,9 @@
                     @if($doRelays)
                         <h2 class="mt-5">Relays</h2>
 
-                        @php($byNation = collect($relaysClubs)->groupBy('nation'))
+                        @php
+                            $byNation = collect($relaysClubs)->groupBy('nation');
+                        @endphp
                         @forelse($byNation as $nation => $nationClubs)
                             <h5 class="mt-3">{{ $nation ?: '—' }}</h5>
 

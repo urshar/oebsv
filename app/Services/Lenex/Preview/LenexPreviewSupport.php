@@ -8,10 +8,10 @@ use App\Models\ParaEvent;
 use App\Services\Lenex\LenexImportService;
 use SimpleXMLElement;
 
-class LenexPreviewSupport
+readonly class LenexPreviewSupport
 {
     public function __construct(
-        private readonly LenexImportService $lenex,
+        private LenexImportService $lenex,
     ) {
     }
 

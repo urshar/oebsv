@@ -9,10 +9,10 @@ use App\Services\Lenex\LenexEntryIndex;
 use App\Support\SwimTime;
 use SimpleXMLElement;
 
-class LenexResultsPreviewService
+readonly class LenexResultsPreviewService
 {
     public function __construct(
-        private readonly LenexPreviewSupport $support
+        private LenexPreviewSupport $support
     ) {
     }
 
@@ -91,14 +91,8 @@ class LenexResultsPreviewService
                         $invalidReasons[] = 'Keine passende Meldung (para_entries) gefunden – bitte zuerst Entries importieren';
                     }
 
-                    if ($entry) {
-                        $entryClub = $entry->club ?? null;
-
-                        if (!$entryClub && !empty($entry->para_club_id)) {
-                            $entryClub = ParaClub::find($entry->para_club_id);
-                        }
-
-                        if (!$entryClub) {
+                    if ($entry && !empty($entry->para_club_id)) {
+                        if (!ParaClub::query()->whereKey($entry->para_club_id)->exists()) {
                             $invalidReasons[] = 'Verein der Meldung im System nicht gefunden (para_clubs)';
                         }
                     }
