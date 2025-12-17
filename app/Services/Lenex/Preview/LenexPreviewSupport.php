@@ -118,4 +118,73 @@ readonly class LenexPreviewSupport
 
         return $q->first();
     }
+
+    /**
+     * Liefert z.B. "S14", "SB6", "SM10" oder null.
+     * DB first, fallback auf LENEX ATHLETE/HANDICAP (free/breast/medley).
+     */
+    public function athleteSportClassLabelForStroke(
+        ?ParaAthlete $athlete,
+        ?SimpleXMLElement $lenexAthNode,
+        string $strokeCode
+    ): ?string {
+        $prefix = $this->strokeToClassPrefix($strokeCode);
+
+        // 1) DB: sportclass_s / sportclass_sb / sportclass_sm
+        $dbNum = null;
+        if ($athlete) {
+            $field = match ($prefix) {
+                'SB' => ['sportclass_sb', 'Sportclass_sb'],
+                'SM' => ['sportclass_sm', 'Sportclass_sm'],
+                default => ['sportclass_s', 'Sportclass_s'],
+            };
+
+            foreach ($field as $f) {
+                $val = $athlete->{$f} ?? null;
+                if ($val !== null && $val !== '' && ctype_digit((string) $val)) {
+                    $dbNum = (int) $val;
+                    break;
+                }
+            }
+        }
+
+        if ($dbNum !== null) {
+            return $prefix.$dbNum;
+        }
+
+        // 2) LENEX fallback: ATHLETE/HANDICAP free|breast|medley
+        if ($lenexAthNode && ($lenexAthNode->HANDICAP ?? null) instanceof SimpleXMLElement) {
+            $hc = $lenexAthNode->HANDICAP;
+
+            $attr = match ($prefix) {
+                'SB' => 'breast',
+                'SM' => 'medley',
+                default => 'free',
+            };
+
+            $val = trim((string) ($hc[$attr] ?? ''));
+            if ($val !== '' && ctype_digit($val)) {
+                return $prefix.((int) $val);
+            }
+        }
+
+        return null;
+    }
+
+    public function strokeToClassPrefix(string $strokeCode): string
+    {
+        $strokeCode = strtoupper(trim($strokeCode));
+
+        if (in_array($strokeCode, ['BREAST', 'BREASTSTROKE'], true)) {
+            return 'SB';
+        }
+
+        if (in_array($strokeCode, ['MEDLEY', 'IM'], true)) {
+            return 'SM';
+        }
+
+        // FREE, BACK, FLY -> S
+        return 'S';
+    }
+
 }

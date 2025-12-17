@@ -286,8 +286,19 @@
 
                                             <td>
                                                 {{ $row['last_name'] ?? '' }}, {{ $row['first_name'] ?? '' }}
+
+                                                <span
+                                                    class="badge bg-light text-dark border ms-2 {{ empty($row['sport_class_label']) ? 'text-danger' : '' }}">
+                                                    SK {{ $row['sport_class_label'] ?? '—' }}
+                                                </span>
+
+                                                <span class="text-muted small ms-2">
+                                                    ({{ $row['birth_year'] ?? '—' }})
+                                                </span>
+
+
                                                 <div class="text-muted small">
-                                                    LENEX athleteid: {{ $athId ?: '—' }}
+                                                    LENEX athleteid: {{ $row['lenex_athlete_id'] ?? '—' }}
                                                     @if(!empty($row['db_athlete_id']))
                                                         · DB#{{ $row['db_athlete_id'] }}
                                                     @endif

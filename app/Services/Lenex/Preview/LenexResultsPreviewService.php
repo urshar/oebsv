@@ -5,6 +5,7 @@ namespace App\Services\Lenex\Preview;
 use App\Models\ParaClub;
 use App\Models\ParaEntry;
 use App\Models\ParaMeet;
+use App\Models\Swimstyle;
 use App\Services\Lenex\LenexEntryIndex;
 use App\Support\SwimTime;
 use SimpleXMLElement;
@@ -40,6 +41,82 @@ readonly class LenexResultsPreviewService
             foreach ($session->events as $event) {
                 if (!empty($event->lenex_eventid)) {
                     $eventByLenexId[(string) $event->lenex_eventid] = $event;
+                }
+            }
+        }
+
+        // --- Backfill swimstyle_id aus der aktuellen LENEX-Datei (falls Events im DB swimstyle_id NULL haben) ---
+        $eventMetaByLenexId = [];
+
+        /** @var SimpleXMLElement|null $meetNode */
+        $meetNode = $root->MEETS->MEET[0] ?? null;
+
+        if ($meetNode instanceof SimpleXMLElement && isset($meetNode->SESSIONS)) {
+            foreach ($meetNode->SESSIONS->SESSION ?? [] as $sessionNode) {
+                if (!isset($sessionNode->EVENTS)) {
+                    continue;
+                }
+
+                foreach ($sessionNode->EVENTS->EVENT ?? [] as $eventNode) {
+                    $eid = (string) ($eventNode['eventid'] ?? '');
+                    $ss = $eventNode->SWIMSTYLE ?? null;
+
+                    if ($eid === '' || !($ss instanceof SimpleXMLElement)) {
+                        continue;
+                    }
+
+                    $distance = (int) ($ss['distance'] ?? 0);
+                    $relaycount = (int) ($ss['relaycount'] ?? 1);
+                    $strokeCode = strtoupper(trim((string) ($ss['stroke'] ?? '')));
+
+                    if ($distance <= 0 || $strokeCode === '') {
+                        continue;
+                    }
+
+                    if ($relaycount <= 0) {
+                        $relaycount = 1;
+                    }
+
+                    $eventMetaByLenexId[$eid] = [
+                        'distance' => $distance,
+                        'relaycount' => $relaycount,
+                        'stroke_code' => $strokeCode,
+                    ];
+                }
+            }
+        }
+
+        if (!empty($eventMetaByLenexId)) {
+            // Swimstyles einmal laden und indexieren
+            $styleIndex = [];
+            foreach (Swimstyle::query()->get() as $s) {
+                $key = ((int) $s->distance).'|'.((int) $s->relaycount).'|'.strtoupper((string) $s->stroke_code);
+                $styleIndex[$key] = $s;
+
+                // Fallback: manche DBs haben stroke statt stroke_code genutzt
+                $key2 = ((int) $s->distance).'|'.((int) $s->relaycount).'|'.strtoupper((string) $s->stroke);
+                if (!isset($styleIndex[$key2])) {
+                    $styleIndex[$key2] = $s;
+                }
+            }
+
+            foreach ($eventByLenexId as $lenexEventId => $event) {
+                if (!empty($event->swimstyle_id)) {
+                    continue;
+                }
+
+                $meta = $eventMetaByLenexId[$lenexEventId] ?? null;
+                if (!$meta) {
+                    continue;
+                }
+
+                $k = $meta['distance'].'|'.$meta['relaycount'].'|'.$meta['stroke_code'];
+                $swimstyle = $styleIndex[$k] ?? null;
+
+                if ($swimstyle) {
+                    $event->swimstyle_id = $swimstyle->id;
+                    $event->save();
+                    $event->setRelation('swimstyle', $swimstyle);
                 }
             }
         }
@@ -134,6 +211,29 @@ readonly class LenexResultsPreviewService
                         ];
                     }
 
+                    // Geburtsjahr (DB bevorzugt, sonst LENEX birthdate)
+                    $birthYear = null;
+                    if ($dbAthlete?->birthdate) {
+                        $birthYear = (int) $dbAthlete->birthdate->format('Y');
+                    } elseif (!empty($birthdate) && preg_match('/^\d{4}/', $birthdate, $m)) {
+                        $birthYear = (int) $m[0];
+                    }
+
+                    // Sportklasse (DB bevorzugt; passe Feldnamen an deine DB an)
+                    $sportClass = null;
+                    if ($dbAthlete) {
+                        foreach (['sport_class', 'sportclass', 'sportClass'] as $attr) {
+                            if (!empty($dbAthlete->{$attr}) && ctype_digit((string) $dbAthlete->{$attr})) {
+                                $sportClass = (int) $dbAthlete->{$attr};
+                                break;
+                            }
+                        }
+                    }
+
+                    $strokeCode = strtoupper((string) ($event?->swimstyle?->stroke ?? 'FREE'));
+                    $sportClassLabel = $this->support->athleteSportClassLabelForStroke($dbAthlete, $athNode,
+                        $strokeCode);
+
                     $rows[] = [
                         'result_key' => $resultId ?: ($lenexAthleteId.'|'.$lenexEventId.'|'.$clubName),
                         'lenex_resultid' => $resultId,
@@ -147,6 +247,10 @@ readonly class LenexResultsPreviewService
                         'first_name' => $first,
                         'last_name' => $last,
                         'db_athlete_id' => $dbAthlete?->id,
+
+                        'sport_class' => $sportClass,
+                        'sport_class_label' => $sportClassLabel,
+                        'birth_year' => $birthYear,
 
                         'entry_id' => $entry?->id,
 

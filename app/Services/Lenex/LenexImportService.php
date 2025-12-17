@@ -9,6 +9,7 @@ use App\Models\ParaEventAgegroup;
 use App\Models\ParaMeet;
 use App\Models\ParaSession;
 use App\Models\Subregion;
+use App\Models\Swimstyle;
 use App\Services\AgegroupResolver;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -187,6 +188,28 @@ class LenexImportService
                 $swimstyleModel = $this->swimstyleResolver->resolveFromLenex(
                     $swimstyleNode instanceof SimpleXMLElement ? $swimstyleNode : null
                 );
+
+                // Fallback: falls Resolver nichts findet, direkt aus DB (swimstyles) matchen
+                if (!$swimstyleModel && $swimstyleNode instanceof SimpleXMLElement) {
+                    $distance = (int) ($swimstyleNode['distance'] ?? 0);
+                    $relaycount = (int) ($swimstyleNode['relaycount'] ?? 1);
+                    $strokeCode = strtoupper(trim((string) ($swimstyleNode['stroke'] ?? '')));
+
+                    if ($relaycount <= 0) {
+                        $relaycount = 1;
+                    }
+
+                    if ($distance > 0 && $strokeCode !== '') {
+                        $swimstyleModel = Swimstyle::query()
+                            ->where('distance', $distance)
+                            ->where('relaycount', $relaycount)
+                            ->where(function ($q) use ($strokeCode) {
+                                $q->where('stroke_code', $strokeCode)
+                                    ->orWhere('stroke', $strokeCode);
+                            })
+                            ->first();
+                    }
+                }
 
                 $event = ParaEvent::updateOrCreate(
                     [
