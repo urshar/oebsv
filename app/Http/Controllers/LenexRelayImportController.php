@@ -9,6 +9,7 @@ use App\Models\ParaEvent;
 use App\Models\ParaMeet;
 use App\Services\Lenex\LenexImportService;
 use App\Services\Lenex\LenexRelayImporter;
+use App\Services\Lenex\Preview\LenexPreviewSupport;
 use App\Support\SwimTime;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -30,8 +31,12 @@ class LenexRelayImportController extends Controller
     /**
      * @throws RandomException
      */
-    public function preview(Request $request, ParaMeet $meet, LenexImportService $lenex): View
-    {
+    public function preview(
+        Request $request,
+        ParaMeet $meet,
+        LenexImportService $lenex,
+        LenexPreviewSupport $support,
+    ): View {
         $validated = $request->validate([
             'lenex_file' => ['required', 'file', 'max:51200'], // 50MB
         ]);
@@ -40,7 +45,7 @@ class LenexRelayImportController extends Controller
         $file = $validated['lenex_file'];
 
         // 1) Upload speichern (RELATIVER Pfad)
-        $relativePath = $this->storeUploadedLenex($file);
+        $relativePath = $support->storeUploadedLenex($file);
 
         // 2) Absoluten Pfad holen (Windows-safe)
         $absolutePath = Storage::disk('local')->path($relativePath);
@@ -314,23 +319,6 @@ class LenexRelayImportController extends Controller
         $lenexFilePath = $relativePath;
 
         return view('lenex.relays-preview', compact('meet', 'clubs', 'lenexFilePath'));
-    }
-
-    /**
-     * @throws RandomException
-     */
-    private function storeUploadedLenex(UploadedFile $file): string
-    {
-        $ext = strtolower($file->getClientOriginalExtension() ?: 'lxf');
-        $name = 'lenex_'.now()->format('Ymd_His').'_'.bin2hex(random_bytes(4)).'.'.$ext;
-
-        $relativePath = $file->storeAs('tmp/lenex', $name, 'local');
-
-        if (!$relativePath || !Storage::disk('local')->exists($relativePath)) {
-            throw new RuntimeException('Upload konnte nicht in storage/app/tmp/lenex gespeichert werden.');
-        }
-
-        return $relativePath;
     }
 
     // ------------------------------------------------------------

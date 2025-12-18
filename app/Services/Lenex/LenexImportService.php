@@ -185,9 +185,7 @@ class LenexImportService
                 $swimstyleNode = $eventNode->SWIMSTYLE ?? null;
                 $feeNode = $eventNode->FEE ?? null;
 
-                $swimstyleModel = $this->swimstyleResolver->resolveFromLenex(
-                    $swimstyleNode instanceof SimpleXMLElement ? $swimstyleNode : null
-                );
+                $swimstyleModel = null;
 
                 // Fallback: falls Resolver nichts findet, direkt aus DB (swimstyles) matchen
                 if (!$swimstyleModel && $swimstyleNode instanceof SimpleXMLElement) {

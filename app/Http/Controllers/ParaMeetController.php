@@ -2,25 +2,28 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Continent;
 use App\Models\ParaEntry;
 use App\Models\ParaMeet;
-use App\Models\Continent;
 use App\Models\ParaResult;
 use Illuminate\Http\Request;
 
 class ParaMeetController extends Controller
 {
-    /**
-     * Übersicht aller Meetings
-     */
     public function index()
     {
-        $meets = ParaMeet::with('nation')
-            ->orderByDesc('from_date')
-            ->get();
+        $meets = ParaMeet::query()
+            ->withCount([
+                'sessions', // Struktur
+                'entries',  // Entries
+                'results',  // Results
+            ])
+            ->orderByDesc('start_date')
+            ->paginate(50);
 
         return view('meets.index', compact('meets'));
     }
+
 
     /**
      * Detailansicht eines Meetings
@@ -44,11 +47,13 @@ class ParaMeetController extends Controller
     public function edit(ParaMeet $meet)
     {
         // Kontinente mit Nationen laden, korrekt nach *NameDe/NameEn* sortiert
-        $continents = Continent::with(['nations' => function ($query) {
-            $query
-                ->orderBy('nameDe')
-                ->orderBy('nameEn');
-        }])
+        $continents = Continent::with([
+            'nations' => function ($query) {
+                $query
+                    ->orderBy('nameDe')
+                    ->orderBy('nameEn');
+            }
+        ])
             ->orderBy('nameDe')
             ->orderBy('nameEn')
             ->get();
@@ -63,14 +68,14 @@ class ParaMeetController extends Controller
     public function update(Request $request, ParaMeet $meet)
     {
         $data = $request->validate([
-            'name'             => ['required', 'string', 'max:255'],
-            'city'             => ['nullable', 'string', 'max:255'],
-            'nation_id'        => ['nullable', 'exists:nations,id'], // <– nutzt deine nations-Tabelle
-            'from_date'        => ['nullable', 'date'],
-            'to_date'          => ['nullable', 'date', 'after_or_equal:from_date'],
+            'name' => ['required', 'string', 'max:255'],
+            'city' => ['nullable', 'string', 'max:255'],
+            'nation_id' => ['nullable', 'exists:nations,id'], // <– nutzt deine nations-Tabelle
+            'from_date' => ['nullable', 'date'],
+            'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
             'entry_start_date' => ['nullable', 'date'],
-            'entry_deadline'   => ['nullable', 'date'],
-            'withdraw_until'   => ['nullable', 'date'],
+            'entry_deadline' => ['nullable', 'date'],
+            'withdraw_until' => ['nullable', 'date'],
         ]);
 
         $meet->update($data);

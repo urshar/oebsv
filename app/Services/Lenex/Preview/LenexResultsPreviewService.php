@@ -182,7 +182,7 @@ readonly class LenexResultsPreviewService
                     }
 
                     if (!$dbAthlete) {
-                        $invalidReasons[] = "Athlet {$last}, {$first} ({$lenexAthleteId}) nicht in para_athletes gefunden";
+                        $invalidReasons[] = "Athlet $last, $first ($lenexAthleteId) nicht in para_athletes gefunden";
                     }
 
                     // optional sanity: athlete club differs from entry club
@@ -209,6 +209,21 @@ readonly class LenexResultsPreviewService
                             'time_ms' => $tMs,
                             'time_fmt' => $tMs !== null ? SwimTime::format($tMs) : ($tStr ?: '—'),
                         ];
+                    }
+
+                    // Fallback: wenn RESULT keine swimtime hat, nimm die Zeit aus dem letzten Split
+                    if ($timeMs === null && !empty($splits)) {
+                        $last = $splits[count($splits) - 1];
+
+                        if (!empty($last['time_ms'])) {
+                            $timeMs = (int) $last['time_ms'];
+                        } elseif (!empty($last['swimtime'])) {
+                            $timeMs = $this->support->parseTimeToMs((string) $last['swimtime']);
+                        }
+
+                        if (($swimtimeStr ?? '') === '' && !empty($last['swimtime'])) {
+                            $swimtimeStr = (string) $last['swimtime'];
+                        }
                     }
 
                     // Geburtsjahr (DB bevorzugt, sonst LENEX birthdate)
@@ -247,6 +262,7 @@ readonly class LenexResultsPreviewService
                         'first_name' => $first,
                         'last_name' => $last,
                         'db_athlete_id' => $dbAthlete?->id,
+                        'athlete_filter_key' => $lenexAthleteId,
 
                         'sport_class' => $sportClass,
                         'sport_class_label' => $sportClassLabel,

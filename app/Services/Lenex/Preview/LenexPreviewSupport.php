@@ -6,6 +6,10 @@ use App\Models\ParaAthlete;
 use App\Models\ParaClub;
 use App\Models\ParaEvent;
 use App\Services\Lenex\LenexImportService;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Random\RandomException;
+use RuntimeException;
 use SimpleXMLElement;
 
 readonly class LenexPreviewSupport
@@ -26,7 +30,11 @@ readonly class LenexPreviewSupport
     ): array {
         $resultId = (string) ($resNode['resultid'] ?? '');
         $lenexEventId = (string) ($resNode['eventid'] ?? '');
-        $swimtimeStr = trim((string) ($resNode['swimtime'] ?? ''));
+        $swimtimeStr = trim((string) ($resNode['swimtime'] ?? $resNode['SWIMTIME'] ?? ''));
+
+        if ($swimtimeStr === '' && isset($resNode->SWIMTIME)) {
+            $swimtimeStr = trim((string) $resNode->SWIMTIME);
+        }
 
         $invalidReasons = [];
 
@@ -187,4 +195,20 @@ readonly class LenexPreviewSupport
         return 'S';
     }
 
+    /**
+     * @throws RandomException
+     */
+    public function storeUploadedLenex(UploadedFile $file): string
+    {
+        $ext = strtolower($file->getClientOriginalExtension() ?: 'lxf');
+        $name = 'lenex_'.now()->format('Ymd_His').'_'.bin2hex(random_bytes(4)).'.'.$ext;
+
+        $relativePath = $file->storeAs('tmp/lenex', $name, 'local');
+
+        if (!$relativePath || !Storage::disk('local')->exists($relativePath)) {
+            throw new RuntimeException('Upload konnte nicht in storage/app/tmp/lenex gespeichert werden.');
+        }
+
+        return $relativePath;
+    }
 }

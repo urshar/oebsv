@@ -22,9 +22,8 @@ class Swimstyle extends Model
 
     public function getLabelDeAttribute(): string
     {
-        // kleiner Helper für das Frontend
-        if ($this->nameDe) {
-            return $this->nameDe;
+        if ($this->stroke_name_de) {
+            return $this->stroke_name_de;
         }
 
         return sprintf('%dm %s%s',
@@ -36,8 +35,8 @@ class Swimstyle extends Model
 
     public function getLabelEnAttribute(): string
     {
-        if ($this->nameEn) {
-            return $this->nameEn;
+        if ($this->stroke_name_en) {
+            return $this->stroke_name_en;
         }
 
         return sprintf('%dm %s%s',

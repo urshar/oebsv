@@ -16,6 +16,7 @@
             <table class="table table-striped mt-3">
                 <thead>
                 <tr>
+                    <th class="text-center" style="width:70px;">IER</th>
                     <th>Name</th>
                     <th>Ort</th>
                     <th>Nation</th>
@@ -26,7 +27,34 @@
                 </thead>
                 <tbody>
                 @foreach($meets as $meet)
+                    @php
+                        $hasStructure = ($meet->sessions_count ?? 0) > 0;
+                        $hasEntries   = ($meet->entries_count ?? 0) > 0;
+                        $hasResults   = ($meet->results_count ?? 0) > 0;
+
+                        // Default: nichts
+                        $code  = '—';
+                        $class = 'bg-secondary';
+
+                        // Deine Logik
+                        if ($hasResults && $hasStructure) {
+                            $code  = 'R';
+                            $class = 'bg-success';
+                        } elseif ($hasStructure && $hasEntries && !$hasResults) {
+                            $code  = 'E';
+                            $class = 'bg-warning text-dark';
+                        } elseif ($hasStructure && !$hasEntries && !$hasResults) {
+                            $code  = 'I';
+                            $class = 'bg-info text-dark';
+                        }
+                    @endphp
+
                     <tr>
+                        <td class="text-center">
+                            <span class="badge rounded-pill {{ $class }}">
+                                {{ $code }}
+                            </span>
+                        </td>
                         <td>{{ $meet->name }}</td>
                         <td>{{ $meet->city }}</td>
                         <td>{{ optional($meet->nation)->ioc }}</td>

@@ -41,16 +41,49 @@
                 Meets
             </a>
 
-            @if($navMeet)
-                <a href="{{ route('meets.lenex.results-wizard.form', $navMeet) }}"
-                   class="text-white text-decoration-none {{ request()->is('meets/*/lenex/results-wizard*') ? 'fw-bold text-decoration-underline' : '' }}">
-                    LENEX Wizard
+            @php
+                $lenexActive = request()->routeIs('lenex.*') || request()->routeIs('meets.lenex.*');
+            @endphp
+
+            <div class="dropdown">
+                <a class="text-white text-decoration-none dropdown-toggle {{ $lenexActive ? 'fw-bold text-decoration-underline' : '' }}"
+                   href="#"
+                   role="button"
+                   data-bs-toggle="dropdown"
+                   aria-expanded="false">
+                    LENEX Import
                 </a>
-            @else
-                <span class="text-white-50 text-decoration-none">
-                    LENEX Wizard
-                </span>
-            @endif
+
+                <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end">
+                    {{-- Meet + Struktur (ohne Meet-Kontext) --}}
+                    <li>
+                        <a class="dropdown-item" href="{{ route('lenex.meet-wizard.form') }}">
+                            Meet + Struktur
+                        </a>
+                    </li>
+
+                    <li>
+                        <hr class="dropdown-divider">
+                    </li>
+
+                    {{-- Entries/Results (nur wenn ein Meet im Kontext ist) --}}
+                    @if($navMeet)
+                        <li>
+                            <a class="dropdown-item" href="{{ route('meets.lenex.entries-wizard.form', $navMeet) }}">
+                                Entries
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item" href="{{ route('meets.lenex.results-wizard.form', $navMeet) }}">
+                                Results
+                            </a>
+                        </li>
+                    @else
+                        <li><span class="dropdown-item-text text-secondary">Entries (Meet auswählen)</span></li>
+                        <li><span class="dropdown-item-text text-secondary">Results (Meet auswählen)</span></li>
+                    @endif
+                </ul>
+            </div>
 
             <a href="{{ route('athletes.index') }}"
                class="text-white text-decoration-none {{ request()->is('athletes*') ? 'fw-bold text-decoration-underline' : '' }}">

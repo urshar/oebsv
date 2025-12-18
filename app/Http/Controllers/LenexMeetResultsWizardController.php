@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\ParaMeet;
 use App\Services\Lenex\LenexImportService;
+use App\Services\Lenex\LenexMeetStructureImportService;
 use App\Services\Lenex\LenexRelayImporter;
 use App\Services\Lenex\LenexResultsImporter;
+use App\Services\Lenex\Preview\LenexPreviewSupport;
 use App\Services\Lenex\Preview\LenexRelaysPreviewService;
 use App\Services\Lenex\Preview\LenexResultsPreviewService;
 use Illuminate\Contracts\View\View;
@@ -26,11 +28,14 @@ class LenexMeetResultsWizardController extends Controller
 
     /**
      * @throws RandomException
+     * @throws Throwable
      */
     public function preview(
         Request $request,
         ParaMeet $meet,
         LenexImportService $lenex,
+        LenexMeetStructureImportService $meetStructure,
+        LenexPreviewSupport $support,
         LenexResultsPreviewService $resultsPreview,
         LenexRelaysPreviewService $relaysPreview
     ): View|RedirectResponse {
@@ -52,10 +57,12 @@ class LenexMeetResultsWizardController extends Controller
         /** @var UploadedFile $file */
         $file = $data['lenex_file'];
 
-        $relativePath = $this->storeUploadedLenex($file);
+        $relativePath = $support->storeUploadedLenex($file);
         $absolutePath = Storage::disk('local')->path($relativePath);
 
         $root = $lenex->loadLenexRootFromPath($absolutePath);
+
+        $meetStructure->ensureMeetAndStructureForMeet($root, $meet);
 
         $resultsData = $doResults ? $resultsPreview->build($root, $meet) : null;
         $relaysData = $doRelays ? $relaysPreview->build($root, $meet) : null;
@@ -71,28 +78,13 @@ class LenexMeetResultsWizardController extends Controller
     }
 
     /**
-     * @throws RandomException
-     */
-    private function storeUploadedLenex(UploadedFile $file): string
-    {
-        $ext = strtolower($file->getClientOriginalExtension() ?: 'lxf');
-        $name = 'lenex_'.now()->format('Ymd_His').'_'.bin2hex(random_bytes(4)).'.'.$ext;
-
-        $relativePath = $file->storeAs('tmp/lenex', $name, 'local');
-
-        if (!$relativePath || !Storage::disk('local')->exists($relativePath)) {
-            throw new RuntimeException('Upload konnte nicht in storage/app/tmp/lenex gespeichert werden.');
-        }
-
-        return $relativePath;
-    }
-
-    /**
      * @throws Throwable
      */
     public function import(
         Request $request,
         ParaMeet $meet,
+        LenexImportService $lenex,
+        LenexMeetStructureImportService $meetStructure,
         LenexResultsImporter $resultsImporter,
         LenexRelayImporter $relayImporter
     ): RedirectResponse {
@@ -114,8 +106,16 @@ class LenexMeetResultsWizardController extends Controller
 
         $absolutePath = Storage::disk('local')->path($relativePath);
 
-        $selectedResults = $data['selected_results'] ?? [];
-        $selectedRelays = $data['selected_relays'] ?? [];
+        $root = $lenex->loadLenexRootFromPath($absolutePath);
+        $meetStructure->ensureMeetAndStructureForMeet($root, $meet);
+
+        if (!empty($selectedResults)) {
+            $resultsImporter->importSelected($absolutePath, $meet, $selectedResults);
+        }
+
+        if (!empty($selectedRelays)) {
+            $relayImporter->import($absolutePath, $meet, $selectedRelays);
+        }
 
         if (!empty($selectedResults)) {
             $resultsImporter->importSelected($absolutePath, $meet, $selectedResults);

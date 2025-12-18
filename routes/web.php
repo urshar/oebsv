@@ -55,6 +55,12 @@ Route::prefix('lenex')
 
         Route::post('upload', [LenexImportController::class, 'store'])
             ->name('upload.store');
+
+        Route::get('meet-wizard', [LenexImportController::class, 'create'])
+            ->name('meet-wizard.form');
+
+        Route::post('meet-wizard', [LenexImportController::class, 'store'])
+            ->name('meet-wizard.store');
     });
 
 /*
@@ -118,13 +124,34 @@ Route::prefix('meets/{meet}')
 
                 Route::post('results-wizard/import', [LenexMeetResultsWizardController::class, 'import'])
                     ->name('results-wizard.import');
+
+                Route::get('meet', [LenexImportController::class, 'create'])
+                    ->name('meet-wizard.form');
+
+                Route::post('meet', [LenexImportController::class, 'store'])
+                    ->name('meet-wizard.store');
+
+                // Alias für Navbar: Entries Wizard (Meet-Kontext)
+                Route::get('entries-wizard', [LenexImportController::class, 'createEntries'])
+                    ->name('entries-wizard.form');
+
+                Route::post('entries-wizard', [LenexImportController::class, 'storeEntries'])
+                    ->name('entries-wizard.store');
+
             });
 
+        // ✅ Alias für Navbar: Entries Wizard
+        Route::get('entries-wizard', [LenexImportController::class, 'createEntries'])
+            ->name('entries-wizard.form');
+
+        Route::post('entries-wizard', [LenexImportController::class, 'storeEntries'])
+            ->name('entries-wizard.store');
+
         /*
-|--------------------------------------------------------------
-| Relays (Staffeln) – CRUD
-|--------------------------------------------------------------
-*/
+            |--------------------------------------------------------------
+            | Relays (Staffeln) – CRUD
+            |--------------------------------------------------------------
+            */
 
         // Relay Entries (index/create/store/show/edit/update/destroy)
         Route::resource('relay-entries', ParaRelayEntryController::class);
