@@ -4,44 +4,30 @@ namespace App\Services\Lenex\Preview;
 
 use App\Models\ParaAthlete;
 use App\Models\ParaClub;
-use App\Models\ParaEntry;
 use App\Models\ParaMeet;
+use App\Services\Matching\AthleteMatchService;
+use App\Services\Matching\ClubMatchService;
 use App\Support\SwimTime;
-use Illuminate\Support\Facades\Schema;
 use SimpleXMLElement;
-use Throwable;
 
 class LenexRelaysPreviewService
 {
     public function __construct(
-        private readonly LenexPreviewSupport $support
+        private readonly LenexPreviewSupport $support,
+        private readonly AthleteMatchService $matcher,
+        private ClubMatchService $clubMatcher,
     ) {
     }
 
-    /**
-     * Returns:
-     * [
-     *   'clubs' => [
-     *      ['nation'=>..., 'club_name'=>..., 'relay_rows'=> [...]],
-     *   ]
-     * ]
-     */
     public function build(SimpleXMLElement $root, ParaMeet $meet): array
     {
-        /** @var SimpleXMLElement|null $meetNode */
         $meetNode = $root->MEETS->MEET[0] ?? null;
+        /** @var SimpleXMLElement|null $meetNode */
         if (!$meetNode instanceof SimpleXMLElement) {
             return ['clubs' => []];
         }
 
-        // Globaler LENEX Athlete Index: athleteid => ATHLETE (für Name + HANDICAP)
-        $globalAthNodeById = $this->buildGlobalAthleteIndex($meetNode);
-
-        // resultid -> agegroup info (für Relay-Sportklasse wie S14/S34/S49)
-        $resultAgegroupByResultId = $this->buildResultAgegroupIndex($meetNode);
-
-        // DB: Events + Swimstyle
-        $meet->load('sessions.events.swimstyle');
+        $meet->load('sessions.events.swimstyle', 'sessions.events.agegroups');
 
         $eventByLenexId = [];
         foreach ($meet->sessions as $session) {
@@ -52,43 +38,56 @@ class LenexRelaysPreviewService
             }
         }
 
-        // Sammle alle athleteids aus Relay-Positionen -> schneller DB lookup via ParaEntry
-        $allPosIds = [];
+        $globalAthNodeById = $this->buildGlobalAthleteIndex($meetNode);
+        $resultAgegroupByResultId = $this->buildResultAgegroupIndex($meetNode);
+
+        // Prefetch clubs by tmId
+        $lenexClubIds = [];
         foreach (($meetNode->CLUBS->CLUB ?? []) as $clubNode) {
-            foreach (($clubNode->RELAYS->RELAY ?? []) as $relayNode) {
-                foreach (($relayNode->RESULTS->RESULT ?? []) as $resNode) {
-                    foreach ($this->iterRelayPositions($relayNode, $resNode) as $posNode) {
-                        $aid = (string) ($posNode['athleteid'] ?? '');
-                        if ($aid !== '') {
-                            $allPosIds[] = $aid;
-                        }
-                    }
-                }
+            $cid = trim((string) ($clubNode['clubid'] ?? ''));
+            if ($cid !== '' && ctype_digit($cid)) {
+                $lenexClubIds[] = (int) $cid;
             }
         }
-        $allPosIds = array_values(array_unique($allPosIds));
-
-        $entriesByLenexAthleteId = ParaEntry::query()
-            ->where('para_meet_id', $meet->id)
-            ->when(!empty($allPosIds), fn($q) => $q->whereIn('lenex_athleteid', $allPosIds))
-            ->with('athlete.club')
-            ->get()
-            ->keyBy('lenex_athleteid');
+        $clubsByTmId = [];
+        if (!empty($lenexClubIds)) {
+            $clubsByTmId = ParaClub::query()
+                ->whereIn('tmId', array_values(array_unique($lenexClubIds)))
+                ->get()
+                ->keyBy('tmId')
+                ->all();
+        }
 
         $clubs = [];
 
         foreach (($meetNode->CLUBS->CLUB ?? []) as $clubNode) {
             /** @var SimpleXMLElement $clubNode */
-            $lenexClubId = (string) ($clubNode['clubid'] ?? '');
+            $short = trim((string) ($clubNode['shortname'] ?? ''));
+            $lenexClubId = trim((string) ($clubNode['clubid'] ?? ''));
             $clubName = trim((string) ($clubNode['name'] ?? ''));
             $nation = trim((string) ($clubNode['nation'] ?? ''));
 
-            $dbClub = $this->findClub($lenexClubId, $clubName);
+            $clubPrimary = $this->clubMatcher->findByLenexClubId($lenexClubId);
+            $clubCands = $this->clubMatcher->candidates($clubName, $short, 10);
+            $clubAutoId = $clubPrimary?->id ?? $this->clubMatcher->autoSelectIdFromCandidates($clubCands, 90);
 
-            // Club-interner Athleten Index (für "gehört im LENEX nicht zu diesem Verein")
+            $dbClub = null;
+            if ($lenexClubId !== '' && ctype_digit($lenexClubId)) {
+                $dbClub = $clubsByTmId[(int) $lenexClubId] ?? null;
+            }
+            if (!$dbClub && $clubName !== '') {
+                $dbClub = ParaClub::query()
+                    ->where('nameDe', $clubName)
+                    ->orWhere('shortNameDe', $clubName)
+                    ->orWhere('nameEn', $clubName)
+                    ->orWhere('shortNameEn', $clubName)
+                    ->first();
+            }
+
+            // Club-local athlete index (LENEX “belongs to club” check)
             $clubAthNodeById = [];
             foreach (($clubNode->ATHLETES->ATHLETE ?? []) as $athNode) {
-                $aid = (string) ($athNode['athleteid'] ?? '');
+                $aid = trim((string) ($athNode['athleteid'] ?? ''));
                 if ($aid !== '') {
                     $clubAthNodeById[$aid] = $athNode;
                 }
@@ -103,110 +102,97 @@ class LenexRelaysPreviewService
 
                 foreach (($relayNode->RESULTS->RESULT ?? []) as $resNode) {
                     /** @var SimpleXMLElement $resNode */
-
-                    // ✅ kein Duplicate mehr: Result Context über Support (inkl. missing event/club)
-                    $ctx = $this->support->initResultContext($resNode, $eventByLenexId, $dbClub);
+                    $ctx = $this->support->initResultContext($resNode, $eventByLenexId);
 
                     $resultId = $ctx['resultId'];
                     $lenexEventId = $ctx['lenexEventId'];
                     $swimtimeStr = $ctx['swimtimeStr'];
-                    $invalidReasons = $ctx['invalidReasons'];
+
+                    $invalidReasons = $ctx['invalidReasons']; // blockers
+                    $warnings = [];
+
                     $event = $ctx['event'];
 
-                    $eventLabel = SwimstyleLabel::relay($event);
+                    if (!$dbClub) {
+                        $warnings[] = 'Verein nicht in para_clubs gefunden – wird beim Import automatisch angelegt.';
+                    }
 
-                    // Relay Sportklasse aus AGEGROUP/RANKING context (S14/S20/S21/S34/S49)
-                    $agInfo = $resultId !== '' ? ($resultAgegroupByResultId[$resultId] ?? null) : null;
-                    $relaySportClass = $this->resolveRelaySportClassCode($agInfo);
+                    $eventLabel = SwimstyleLabel::relay($event);
+                    $strokeCode = strtoupper((string) ($event?->swimstyle?->stroke_code ?? $event?->swimstyle?->stroke ?? 'FREE'));
 
                     $timeMs = $this->support->parseTimeToMs($swimtimeStr);
 
-                    // Stroke code für LENEX Handicap Auswahl (FREE/BREAST/MEDLEY)
-                    $strokeCode = strtoupper((string) ($event?->swimstyle?->stroke ?? 'FREE'));
+                    $agInfo = $resultId !== '' ? ($resultAgegroupByResultId[$resultId] ?? null) : null;
+                    $relaySportClass = $this->resolveRelaySportClassCode($agInfo);
 
                     $positions = [];
                     $legIdx = 1;
 
                     foreach ($this->iterRelayPositions($relayNode, $resNode) as $posNode) {
-                        $aid = (string) ($posNode['athleteid'] ?? '');
+                        /** @var SimpleXMLElement $posNode */
+                        $aid = trim((string) ($posNode['athleteid'] ?? ''));
                         $leg = (int) ($posNode['number'] ?? $posNode['leg'] ?? $legIdx);
-
-                        $dbAthlete = null;
 
                         $inLenexClub = $aid !== '' && isset($clubAthNodeById[$aid]);
 
-                        $globalAthNode = $globalAthNodeById[$aid] ?? null;
+                        $globalAthNode = $aid !== '' ? ($globalAthNodeById[$aid] ?? null) : null;
                         $nameNode = $inLenexClub ? ($clubAthNodeById[$aid] ?? null) : $globalAthNode;
 
                         $first = $nameNode ? trim((string) ($nameNode['firstname'] ?? $nameNode['givenname'] ?? '')) : '';
                         $last = $nameNode ? trim((string) ($nameNode['lastname'] ?? $nameNode['familyname'] ?? '')) : '';
                         $birthdate = $nameNode ? trim((string) ($nameNode['birthdate'] ?? '')) : '';
+                        $gender = $nameNode ? trim((string) ($nameNode['gender'] ?? '')) : '';
 
-                        // Prefer ParaEntry mapping
-                        $mappedEntry = $aid !== '' ? ($entriesByLenexAthleteId[$aid] ?? null) : null;
-                        $dbAthlete = $mappedEntry?->athlete;
+                        $primary = $this->matcher->findByLenexAthleteId($aid);
 
-                        // Fallback by name (+ birthdate)
-                        if (!$dbAthlete && $first !== '' && $last !== '') {
-                            $q = ParaAthlete::query()
-                                ->with('club')
-                                ->whereRaw('LOWER(firstName) = ?', [mb_strtolower($first)])
-                                ->whereRaw('LOWER(lastName) = ?', [mb_strtolower($last)]);
-                            if ($birthdate !== '') {
-                                $q->whereDate('birthdate', $birthdate);
-                            }
-                            $dbAthlete = $q->first();
-                        }
+                        $cands = $this->matcher->candidates(
+                            $first,
+                            $last,
+                            $birthdate ?: null,
+                            $gender ?: null,
+                            $dbClub?->id
+                        );
 
-                        // Namen auffüllen aus DB wenn LENEX leer
-                        if (($first === '' || $last === '') && $dbAthlete) {
-                            $first = (string) $dbAthlete->firstName;
-                            $last = (string) $dbAthlete->lastName;
-                        }
+                        $autoSelectedId = $primary?->id ?? $this->matcher->autoSelectIdFromCandidates($cands, 88);
 
-                        $existsInDb = (bool) $dbAthlete;
-                        $inDbClub = $this->support->athleteInClub($dbAthlete, $dbClub);
-
-                        // LENEX-Club mismatch als eigene Meldung (zusätzlich zu DB-Club mismatch)
                         if (!$inLenexClub) {
+                            // This is the “red” rule you wanted: participants from other LENEX clubs
                             $invalidReasons[] = "LENEX#{$aid} ({$last}, {$first}) gehört im LENEX nicht zu diesem Verein";
                         }
 
-                        // DB-Reasons (nicht vorhanden / anderer Verein)
-                        $this->support->addAthleteDbReasons(
-                            $invalidReasons,
-                            $dbAthlete,
-                            $inDbClub,
-                            $first,
-                            $last,
-                            $aid,
-                            $clubName
-                        );
-
-                        // Sportklasse pro Athlet (DB-first; fallback LENEX HANDICAP)
-                        $sportClass = $this->getSportClassNumber($dbAthlete);
-                        if ($sportClass === null) {
-                            $sportClass = $this->lenexAthleteSportClass($globalAthNode, $strokeCode);
+                        if (!$autoSelectedId) {
+                            $warnings[] = "Athlet {$last}, {$first} ({$aid}) nicht in para_athletes – wird beim Import automatisch angelegt (Status W).";
                         }
+
+                        // DB club mismatch: highlight (also “red” if you want strict behaviour)
+                        $dbAthlete = $primary ?: ($autoSelectedId ? ParaAthlete::find($autoSelectedId) : null);
+                        $inDbClub = $this->support->athleteInClub($dbAthlete, $dbClub);
+                        if ($dbAthlete && !$inDbClub && $dbClub) {
+                            $invalidReasons[] = "Athlet {$dbAthlete->lastName}, {$dbAthlete->firstName} gehört im System nicht zu Verein {$clubName}";
+                        }
+
+                        $sportLabel = $this->support->athleteSportClassLabelForStroke($dbAthlete, $globalAthNode,
+                            $strokeCode);
+                        $sportNum = $this->support->athleteSportClassNumberForStroke($dbAthlete, $globalAthNode,
+                            $strokeCode);
 
                         $positions[] = [
                             'leg' => $leg,
                             'lenex_athlete_id' => $aid,
                             'first_name' => $first,
                             'last_name' => $last,
-                            'db_athlete_id' => $dbAthlete?->id,
 
-                            'exists_in_db' => $existsInDb,
-                            'in_lenex_club' => $inLenexClub,
-                            'in_db_club' => $inDbClub,
+                            'sport_class' => $sportLabel,
+                            'sport_class_num' => $sportNum,
 
-                            'sport_class' => $sportClass,
+                            'match_candidates' => $cands,
+                            'match_selected' => $autoSelectedId,
                         ];
 
                         $legIdx++;
                     }
 
-                    // Relay Sportklassen-Regeln prüfen (Summe / erlaubte Klassen)
+                    // Relay sportclass rule check (S20/S34/S49 etc)
                     $check = $this->checkRelaySportClassRule($relaySportClass, $positions);
                     if (!$check['ok']) {
                         $invalidReasons[] = $check['message'];
@@ -232,6 +218,7 @@ class LenexRelaysPreviewService
 
                         'invalid' => !empty($invalidReasons),
                         'invalid_reasons' => array_values(array_unique($invalidReasons)),
+                        'warnings' => array_values(array_unique($warnings)),
                     ];
                 }
             }
@@ -242,6 +229,8 @@ class LenexRelaysPreviewService
                     'club_name' => $clubName,
                     'nation' => $nation,
                     'relay_rows' => $relayRows,
+                    'club_match_candidates' => $clubCands,
+                    'club_match_selected' => $clubAutoId,  // kann null sein -> dann bleibt "auto"
                 ];
             }
         }
@@ -249,30 +238,22 @@ class LenexRelaysPreviewService
         return ['clubs' => $clubs];
     }
 
-    // ------------------------------------------------------------
-    // Helpers
-    // ------------------------------------------------------------
+    // -------------------- helpers --------------------
 
     private function buildGlobalAthleteIndex(SimpleXMLElement $meetNode): array
     {
         $idx = [];
-
         foreach (($meetNode->CLUBS->CLUB ?? []) as $cNode) {
             foreach (($cNode->ATHLETES->ATHLETE ?? []) as $aNode) {
-                $id = (string) ($aNode['athleteid'] ?? '');
+                $id = trim((string) ($aNode['athleteid'] ?? ''));
                 if ($id !== '') {
                     $idx[$id] = $aNode;
                 }
             }
         }
-
         return $idx;
     }
 
-    /**
-     * resultid -> ['name'=>..., 'handicap'=>..., 'gender'=>...]
-     * Bestes Ranking (kleinste order) gewinnt.
-     */
     private function buildResultAgegroupIndex(SimpleXMLElement $meetNode): array
     {
         $map = [];
@@ -292,7 +273,6 @@ class LenexRelaysPreviewService
                         }
 
                         $order = (int) ($rk['order'] ?? 999999);
-
                         if (!isset($bestOrder[$rid]) || $order < $bestOrder[$rid]) {
                             $bestOrder[$rid] = $order;
                             $map[$rid] = [
@@ -307,59 +287,6 @@ class LenexRelaysPreviewService
         }
 
         return $map;
-    }
-
-    /**
-     * Unterstützt beide Varianten:
-     *  - RESULT/RELAYPOSITIONS/RELAYPOSITION
-     *  - RELAY/POSITIONS/POSITION
-     */
-    private function iterRelayPositions(SimpleXMLElement $relayNode, SimpleXMLElement $resNode): array
-    {
-        $list = [];
-
-        foreach (($resNode->RELAYPOSITIONS->RELAYPOSITION ?? []) as $p) {
-            $list[] = $p;
-        }
-        if (!empty($list)) {
-            return $list;
-        }
-
-        foreach (($relayNode->POSITIONS->POSITION ?? []) as $p) {
-            $list[] = $p;
-        }
-
-        return $list;
-    }
-
-    private function findClub(string $lenexClubId, string $clubName): ?ParaClub
-    {
-        // Wenn du ParaClub::findByLenexOrName() eingebaut hast, nutze das:
-        if (method_exists(ParaClub::class, 'findByLenexOrName')) {
-            /** @phpstan-ignore-next-line */
-            return ParaClub::findByLenexOrName($lenexClubId, $clubName);
-        }
-
-        // Fallback (falls nicht vorhanden)
-        $q = ParaClub::query();
-
-        if ($lenexClubId !== '' && Schema::hasColumn('para_clubs', 'lenex_clubid')) {
-            $club = (clone $q)->where('lenex_clubid', $lenexClubId)->first();
-            if ($club) {
-                return $club;
-            }
-        }
-
-        if ($clubName === '') {
-            return null;
-        }
-
-        return $q->where(function ($qq) use ($clubName) {
-            $qq->where('nameDe', $clubName)
-                ->orWhere('shortNameDe', $clubName)
-                ->orWhere('nameEn', $clubName)
-                ->orWhere('shortNameEn', $clubName);
-        })->first();
     }
 
     private function resolveRelaySportClassCode(?array $agInfo): ?string
@@ -397,70 +324,21 @@ class LenexRelaysPreviewService
         return null;
     }
 
-    /**
-     * DB-first: versucht eine Zahl aus Athlete oder (falls vorhanden) aus Klassifikations-Historie zu lesen.
-     */
-    private function getSportClassNumber(?ParaAthlete $athlete): ?int
+    private function iterRelayPositions(SimpleXMLElement $relayNode, SimpleXMLElement $resNode): array
     {
-        if (!$athlete) {
-            return null;
+        $list = [];
+
+        foreach (($resNode->RELAYPOSITIONS->RELAYPOSITION ?? []) as $p) {
+            $list[] = $p;
+        }
+        if (!empty($list)) {
+            return $list;
         }
 
-        foreach (['sport_class', 'sportclass', 'sportClass', 'class'] as $attr) {
-            if (isset($athlete->{$attr}) && $athlete->{$attr} !== null && $athlete->{$attr} !== '') {
-                $v = (string) $athlete->{$attr};
-                if (ctype_digit($v)) {
-                    return (int) $v;
-                }
-            }
+        foreach (($relayNode->POSITIONS->POSITION ?? []) as $p) {
+            $list[] = $p;
         }
-
-        // optional: classifications relation (wenn vorhanden)
-        if (method_exists($athlete, 'classifications')) {
-            try {
-                $cls = $athlete->classifications()->orderByDesc('valid_from')->first();
-                if ($cls) {
-                    foreach (['sport_class', 'sportclass', 'sportClass', 'class'] as $attr) {
-                        if (isset($cls->{$attr}) && $cls->{$attr} !== null && $cls->{$attr} !== '') {
-                            $v = (string) $cls->{$attr};
-                            if (ctype_digit($v)) {
-                                return (int) $v;
-                            }
-                        }
-                    }
-                }
-            } catch (Throwable) {
-                // ignore
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * LENEX fallback: liest aus ATHLETE/HANDICAP free|breast|medley
-     */
-    private function lenexAthleteSportClass(?SimpleXMLElement $athNode, string $strokeCode): ?int
-    {
-        if (!$athNode) {
-            return null;
-        }
-
-        $hc = $athNode->HANDICAP ?? null;
-        if (!$hc instanceof SimpleXMLElement) {
-            return null;
-        }
-
-        $strokeCode = strtoupper(trim($strokeCode));
-
-        $attr = match ($strokeCode) {
-            'BREAST', 'BREASTSTROKE' => 'breast',
-            'MEDLEY', 'IM' => 'medley',
-            default => 'free', // FREE/BACK/FLY -> S-Klasse
-        };
-
-        $val = trim((string) ($hc[$attr] ?? ''));
-        return ($val !== '' && ctype_digit($val)) ? (int) $val : null;
+        return $list;
     }
 
     private function checkRelaySportClassRule(?string $relaySportClass, array $positions): array
@@ -469,22 +347,22 @@ class LenexRelaysPreviewService
             return ['ok' => true, 'message' => null];
         }
 
-        $classes = array_map(
-            fn($p) => $p['sport_class'] ?? null,
-            $positions
-        );
+        $nums = [];
+        foreach ($positions as $p) {
+            $nums[] = $p['sport_class_num'] ?? null;
+        }
 
-        if (in_array(null, $classes, true)) {
+        if (in_array(null, $nums, true)) {
             return [
                 'ok' => false,
-                'message' => "Sportklasse {$relaySportClass}: nicht alle Athleten haben eine Sportklasse (DB oder LENEX HANDICAP)."
+                'message' => "Sportklasse {$relaySportClass}: nicht alle Athleten haben eine Sportklasse."
             ];
         }
 
-        $sum = array_sum($classes);
+        $sum = array_sum($nums);
 
-        $allBetween = function (int $min, int $max) use ($classes): bool {
-            foreach ($classes as $c) {
+        $allBetween = function (int $min, int $max) use ($nums): bool {
+            foreach ($nums as $c) {
                 if ($c < $min || $c > $max) {
                     return false;
                 }
@@ -492,39 +370,33 @@ class LenexRelaysPreviewService
             return true;
         };
 
+        $allIn = function (array $allowed) use ($nums): bool {
+            $allowedMap = array_fill_keys($allowed, true);
+            foreach ($nums as $v) {
+                if (!isset($allowedMap[$v])) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
         return match ($relaySportClass) {
-            'S14' => $this->allIn($classes, [14, 21])
-                ? ['ok' => true, 'message' => null]
-                : ['ok' => false, 'message' => 'Sportklasse S14: erlaubt sind nur Klassen 14 oder 21.'],
-
-            'S21' => $this->allIn($classes, [21])
-                ? ['ok' => true, 'message' => null]
-                : ['ok' => false, 'message' => 'Sportklasse S21: erlaubt sind nur Athleten mit Klasse 21.'],
-
-            'S20' => ($allBetween(1, 10) && $sum <= 20)
-                ? ['ok' => true, 'message' => null]
-                : ['ok' => false, 'message' => "Sportklasse S20: Klassen 1–10 und Summe ≤ 20 (aktuell {$sum})."],
-
-            'S34' => ($allBetween(1, 10) && $sum <= 34)
-                ? ['ok' => true, 'message' => null]
-                : ['ok' => false, 'message' => "Sportklasse S34: Klassen 1–10 und Summe ≤ 34 (aktuell {$sum})."],
-
-            'S49' => ($allBetween(11, 13) && $sum <= 49)
-                ? ['ok' => true, 'message' => null]
-                : ['ok' => false, 'message' => "Sportklasse S49: Klassen 11–13 und Summe ≤ 49 (aktuell {$sum})."],
-
+            'S14' => $allIn([14, 21]) ? ['ok' => true, 'message' => null] : [
+                'ok' => false, 'message' => 'S14: erlaubt nur 14 oder 21.'
+            ],
+            'S21' => $allIn([21]) ? ['ok' => true, 'message' => null] : [
+                'ok' => false, 'message' => 'S21: erlaubt nur 21.'
+            ],
+            'S20' => ($allBetween(1, 10) && $sum <= 20) ? ['ok' => true, 'message' => null] : [
+                'ok' => false, 'message' => "S20: Klassen 1–10 und Summe ≤ 20 (aktuell {$sum})."
+            ],
+            'S34' => ($allBetween(1, 10) && $sum <= 34) ? ['ok' => true, 'message' => null] : [
+                'ok' => false, 'message' => "S34: Klassen 1–10 und Summe ≤ 34 (aktuell {$sum})."
+            ],
+            'S49' => ($allBetween(11, 13) && $sum <= 49) ? ['ok' => true, 'message' => null] : [
+                'ok' => false, 'message' => "S49: Klassen 11–13 und Summe ≤ 49 (aktuell {$sum})."
+            ],
             default => ['ok' => true, 'message' => null],
         };
-    }
-
-    private function allIn(array $values, array $allowed): bool
-    {
-        $allowedMap = array_fill_keys($allowed, true);
-        foreach ($values as $v) {
-            if (!isset($allowedMap[$v])) {
-                return false;
-            }
-        }
-        return true;
     }
 }

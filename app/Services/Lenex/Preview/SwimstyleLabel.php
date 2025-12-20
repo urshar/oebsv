@@ -14,7 +14,7 @@ class SwimstyleLabel
 
         $sw = $event->swimstyle;
         if (!$sw) {
-            return "Event {$event->number}";
+            return "Event $event->number";
         }
 
         $relaycount = (int) ($sw->relaycount ?? 0);
@@ -32,7 +32,7 @@ class SwimstyleLabel
         }
 
         if ($relaycount > 1 && $distance > 0) {
-            return trim("{$relaycount}x{$distance}m {$strokeText}");
+            return trim("{$relaycount}x{$distance}m $strokeText");
         }
 
         // Fallback
@@ -48,16 +48,16 @@ class SwimstyleLabel
 
         $sw = $event->swimstyle;
         if (!$sw) {
-            return "Event {$event->number}";
+            return "Event $event->number";
         }
 
         $distance = (int) ($sw->distance ?? 0);
         $strokeDe = trim((string) ($sw->stroke_name_de ?? $sw->stroke ?? ''));
 
         if ($distance > 0) {
-            return trim("{$distance}m {$strokeDe}");
+            return trim("{$distance}m $strokeDe");
         }
 
-        return $strokeDe !== '' ? $strokeDe : "Event {$event->number}";
+        return $strokeDe !== '' ? $strokeDe : "Event $event->number";
     }
 }

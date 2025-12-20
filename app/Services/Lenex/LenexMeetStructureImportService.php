@@ -6,8 +6,7 @@ use App\Models\ParaEvent;
 use App\Models\ParaEventAgegroup;
 use App\Models\ParaMeet;
 use App\Models\ParaSession;
-use App\Models\Swimstyle;
-use Carbon\Carbon;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use SimpleXMLElement;
@@ -15,68 +14,55 @@ use Throwable;
 
 class LenexMeetStructureImportService
 {
-    /** @var array<string, int|null> */
-    private array $swimstyleIdCache = [];
-
-    /**
-     * Global: erzeugt Meet (falls nicht vorhanden) über meet_hash und importiert Struktur.
-     * @throws Throwable
-     */
-    public function ensureMeetAndStructure(SimpleXMLElement $lenexXml, bool $upsertStructure = true): ParaMeet
-    {
-        $meetNode = $this->getMeetNode($lenexXml);
-        $hash = $this->buildMeetHash($meetNode);
-
-        $meet = ParaMeet::where('meet_hash', $hash)->first();
-
-        return DB::transaction(function () use ($meet, $meetNode, $hash, $upsertStructure) {
-            if (!$meet) {
-                $meet = ParaMeet::create([
-                    'meet_hash' => $hash,
-                    'name' => (string) ($meetNode['name'] ?? ''),
-                    'city' => (string) ($meetNode['city'] ?? null),
-                    'course' => (string) ($meetNode['course'] ?? null),
-                ]);
-            } elseif ($upsertStructure) {
-                $meet->fill($this->onlyMeetColumns([
-                    'name' => (string) ($meetNode['name'] ?? $meet->name),
-                    'city' => (string) ($meetNode['city'] ?? $meet->city),
-                    'course' => (string) ($meetNode['course'] ?? $meet->course),
-                ]))->save();
-            }
-
-            return $this->importStructureIntoMeet($meet, $meetNode, $upsertStructure);
-        });
-    }
-
-    private function getMeetNode(SimpleXMLElement $xml): SimpleXMLElement
-    {
-        if (isset($xml->MEETS->MEET)) {
-            return $xml->MEETS->MEET;
-        }
-
-        $nodes = $xml->xpath('//MEET');
-        if (!$nodes || !isset($nodes[0])) {
-            throw new RuntimeException('LENEX: MEET node not found.');
-        }
-
-        return $nodes[0];
+    public function __construct(
+        private readonly LenexImportService $lenex,
+        private readonly SwimstyleResolver $swimstyleResolver,
+        private readonly NationResolver $nationResolver,
+    ) {
     }
 
     /**
-     * 64 chars (sha256 hex) passend zu para_meets.meet_hash (varchar 64).
-     * Stabil zwischen Structure/Results: bevorzugt meetid, sonst name+course+firstSessionDate.
+     * Importiert Struktur in ein EXISTIERENDES Meet (Wizard).
+     * Wir validieren über meet_hash (gleiches Konzept wie LenexImportService::importMeetStructure()).
      */
-    private function buildMeetHash(SimpleXMLElement $meetNode): string
-    {
-        $meetId = (string) ($meetNode['meetid'] ?? $meetNode['id'] ?? '');
-        if ($meetId !== '') {
-            return hash('sha256', $meetId);
+    public function ensureMeetAndStructureForMeet(
+        SimpleXMLElement $root,
+        ParaMeet $meet,
+        bool $upsertStructure = true
+    ): ParaMeet {
+        $meetNode = $root->MEETS->MEET[0] ?? null;
+        if (!$meetNode instanceof SimpleXMLElement) {
+            throw new RuntimeException('Keine MEET-Definition im LENEX gefunden.');
         }
 
-        $name = mb_strtolower(trim((string) ($meetNode['name'] ?? '')), 'UTF-8');
-        $course = mb_strtolower(trim((string) ($meetNode['course'] ?? '')), 'UTF-8');
+        [$fromDate, $toDate] = $this->extractFromToDates($meetNode);
+        $expectedHash = $this->buildMeetHash($meetNode, $fromDate, $toDate);
 
+        if (!empty($meet->meet_hash) && $meet->meet_hash !== $expectedHash) {
+            throw new RuntimeException('Dieses LENEX gehört zu einem anderen Meeting (meet_hash mismatch).');
+        }
+
+        if (empty($meet->meet_hash)) {
+            $meet->meet_hash = $expectedHash;
+        }
+
+        // optional: original meetid speichern (falls vorhanden) – ohne harte Validierung
+        $meetId = trim((string) ($meetNode['meetid'] ?? $meetNode['id'] ?? ''));
+        if ($meetId !== '' && empty($meet->lenex_meet_key)) {
+            $meet->lenex_meet_key = $meetId;
+        }
+
+        if ($upsertStructure) {
+            $this->importStructureIntoMeet($root, $meet);
+        } else {
+            $meet->save();
+        }
+
+        return $meet->fresh();
+    }
+
+    private function extractFromToDates(SimpleXMLElement $meetNode): array
+    {
         $dates = [];
         foreach (($meetNode->SESSIONS->SESSION ?? []) as $s) {
             $d = $this->parseDate((string) ($s['date'] ?? null));
@@ -85,14 +71,15 @@ class LenexMeetStructureImportService
             }
         }
         sort($dates);
-        $from = $dates[0] ?? '';
-
-        return hash('sha256', $name.'|'.$course.'|'.$from);
+        $from = $dates[0] ?? null;
+        $to = $dates ? end($dates) : null;
+        return [$from, $to];
     }
 
     private function parseDate(?string $value): ?string
     {
-        if (!$value) {
+        $value = trim((string) $value);
+        if ($value === '') {
             return null;
         }
         try {
@@ -102,53 +89,62 @@ class LenexMeetStructureImportService
         }
     }
 
-    /** Schutz: nur Meet-Spalten befüllen, die bei dir existieren. */
-    private function onlyMeetColumns(array $data): array
+    private function buildMeetHash(SimpleXMLElement $meetNode, ?string $fromDate, ?string $toDate): string
     {
-        // du hast die Spalten fix in der Migration; das ist hier nur “sicher gegen Tippfehler”
-        return $data;
+        $name = (string) ($meetNode['name'] ?? '');
+        $city = (string) ($meetNode['city'] ?? '');
+        return sha1($name.'|'.$city.'|'.$fromDate.'|'.$toDate);
     }
 
-    /**
-     * @throws Throwable
-     */
-    private function importStructureIntoMeet(
-        ParaMeet $meet,
-        SimpleXMLElement $meetNode,
-        bool $upsertStructure
-    ): ParaMeet {
-        return DB::transaction(function () use ($meet, $meetNode, $upsertStructure) {
+    private function importStructureIntoMeet(SimpleXMLElement $root, ParaMeet $meet): void
+    {
+        $meetNode = $root->MEETS->MEET[0] ?? null;
+        if (!$meetNode instanceof SimpleXMLElement) {
+            throw new RuntimeException('Keine MEET-Definition im LENEX gefunden.');
+        }
 
-            // Sessions-Daten sammeln (für from/to)
-            $sessionDates = [];
+        DB::transaction(function () use ($root, $meetNode, $meet) {
 
-            $sessions = $meetNode->SESSIONS->SESSION ?? [];
-            $sessionIndex = 0;
+            [$fromDate, $toDate] = $this->extractFromToDates($meetNode);
 
-            foreach ($sessions as $sessionNode) {
-                $sessionIndex++;
+            $nation = $this->nationResolver->fromLenexCode((string) ($meetNode['nation'] ?? ''));
 
-                $number = (int) ($sessionNode['number'] ?? 0);
-                if ($number <= 0) {
-                    $number = $sessionIndex;
-                }
+            $meet->fill([
+                'name' => (string) ($meetNode['name'] ?? $meet->name),
+                'city' => (string) ($meetNode['city'] ?? $meet->city),
+                'nation_id' => $nation?->id,
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
 
-                $date = $this->parseDate((string) ($sessionNode['date'] ?? null));
-                if ($date) {
-                    $sessionDates[] = $date;
-                }
+                'entry_start_date' => $this->parseDate((string) ($meetNode['entrystartdate'] ?? null)),
+                'entry_deadline' => $this->parseDate((string) ($meetNode['deadline'] ?? null)),
+                'withdraw_until' => $this->parseDate((string) ($meetNode['withdrawuntil'] ?? null)),
+                'entry_type' => (string) ($meetNode['entrytype'] ?? null),
+                'course' => (string) ($meetNode['course'] ?? null),
+                'host_club' => (string) ($meetNode['hostclub'] ?? null),
+                'organizer' => (string) ($meetNode['organizer'] ?? null),
+                'organizer_url' => (string) ($meetNode['organizer.url'] ?? null),
+                'result_url' => (string) ($meetNode['result.url'] ?? null),
+
+                'lenex_revisiondate' => $this->parseDate((string) ($root['revisiondate'] ?? null)),
+                'lenex_created' => !empty($root['created']) ? Carbon::parse((string) $root['created']) : null,
+            ]);
+            $meet->save();
+
+            foreach (($meetNode->SESSIONS->SESSION ?? []) as $sessionNode) {
+                /** @var SimpleXMLElement $sessionNode */
+                $sessionNo = (int) ($sessionNode['number'] ?? 0);
 
                 $session = ParaSession::updateOrCreate(
                     [
                         'para_meet_id' => $meet->id,
-                        'number' => $number,
+                        'number' => $sessionNo > 0 ? $sessionNo : null,
                     ],
                     [
                         'name' => (string) ($sessionNode['name'] ?? null),
-                        'date' => $date,
+                        'date' => $this->parseDate((string) ($sessionNode['date'] ?? null)),
                         'start_time' => $this->parseTime((string) ($sessionNode['daytime'] ?? null)),
 
-                        // optional aus deinem Schema
                         'warmup_from' => $this->parseTime((string) ($sessionNode['warmupfrom'] ?? null)),
                         'warmup_until' => $this->parseTime((string) ($sessionNode['warmupuntil'] ?? null)),
                         'official_meeting' => $this->parseTime((string) ($sessionNode['officialmeeting'] ?? null)),
@@ -156,226 +152,70 @@ class LenexMeetStructureImportService
                     ]
                 );
 
-                $events = $sessionNode->EVENTS->EVENT ?? [];
-                foreach ($events as $eventNode) {
-                    $lenexEventId = (string) ($eventNode['eventid'] ?? null);
-                    $eventNumber = (int) ($eventNode['number'] ?? 0);
+                foreach (($sessionNode->EVENTS->EVENT ?? []) as $eventNode) {
+                    /** @var SimpleXMLElement $eventNode */
+                    $lenexEventId = trim((string) ($eventNode['eventid'] ?? ''));
+                    $swimstyleNode = $eventNode->SWIMSTYLE ?? null;
 
-                    $where = ['para_session_id' => $session->id];
-                    if ($lenexEventId !== '') {
-                        $where['lenex_eventid'] = $lenexEventId;
-                    } elseif ($eventNumber > 0) {
-                        $where['number'] = $eventNumber;
-                    } else {
-                        // letzter Fallback: kombinieren
-                        $where['number'] = 0;
-                    }
+                    $swimstyle = $this->swimstyleResolver->resolveFromLenex(
+                        $swimstyleNode instanceof SimpleXMLElement ? $swimstyleNode : null
+                    );
 
-                    $swimstyleId = $this->resolveSwimstyleIdFromEventNode($eventNode);
-
-                    ParaEvent::updateOrCreate(
-                        $where,
+                    $event = ParaEvent::updateOrCreate(
                         [
-                            'number' => $eventNumber ?: null,
+                            'para_session_id' => $session->id,
+                            'lenex_eventid' => $lenexEventId !== '' ? $lenexEventId : null,
+                        ],
+                        [
+                            'number' => (int) ($eventNode['number'] ?? 0) ?: null,
                             'order' => (int) ($eventNode['order'] ?? 0) ?: null,
                             'round' => (string) ($eventNode['round'] ?? null),
-
-                            // ✅ in deinem Schema: swimstyle_id (kein gender/distance/stroke_code!)
-                            'swimstyle_id' => $swimstyleId,
-
-                            'fee' => $this->parseDecimal((string) ($eventNode['fee'] ?? null)),
-                            'fee_currency' => (string) ($eventNode['feecurrency'] ?? null),
+                            'swimstyle_id' => $swimstyle?->id,
                         ]
                     );
 
-                    $event = ParaEvent::where($where)->first();
-
-                    // AgeGroups
-                    $agegroups = $eventNode->AGEGROUPS->AGEGROUP ?? [];
-                    foreach ($agegroups as $agNode) {
-                        $lenexAgeGroupId = (string) ($agNode['agegroupid'] ?? null);
+                    // Agegroups: upsert (nicht "delete all", damit Wizard wiederholbar bleibt)
+                    foreach (($eventNode->AGEGROUPS->AGEGROUP ?? []) as $ageNode) {
+                        /** @var SimpleXMLElement $ageNode */
+                        $lenexAgId = trim((string) ($ageNode['agegroupid'] ?? ''));
 
                         ParaEventAgegroup::updateOrCreate(
                             [
                                 'para_event_id' => $event->id,
-                                'lenex_agegroupid' => $lenexAgeGroupId !== '' ? $lenexAgeGroupId : null,
+                                'lenex_agegroupid' => $lenexAgId !== '' ? $lenexAgId : null,
+                                'name' => (string) ($ageNode['name'] ?? ''),
                             ],
                             [
-                                'name' => (string) ($agNode['name'] ?? ''),
-                                'gender' => (string) ($agNode['gender'] ?? null),
-                                'age_min' => $this->parseIntNullable((string) ($agNode['agemin'] ?? null)),
-                                'age_max' => $this->parseIntNullable((string) ($agNode['agemax'] ?? null)),
-                                'handicap_raw' => (string) ($agNode['handicap'] ?? null),
+                                'gender' => (string) ($ageNode['gender'] ?? null),
+                                'age_min' => $this->parseIntOrNull($ageNode['agemin'] ?? null),
+                                'age_max' => $this->parseIntOrNull($ageNode['agemax'] ?? null),
+                                'handicap_raw' => (string) ($ageNode['handicap'] ?? null),
                             ]
                         );
                     }
                 }
             }
-
-            // from/to am Meet setzen
-            if ($upsertStructure && !empty($sessionDates)) {
-                sort($sessionDates);
-                $meet->fill([
-                    'from_date' => $sessionDates[0],
-                    'to_date' => $sessionDates[count($sessionDates) - 1],
-                ])->save();
-            }
-
-            return $meet;
         });
     }
 
     private function parseTime(?string $value): ?string
     {
-        if (!$value) {
+        $value = trim((string) $value);
+        if ($value === '') {
             return null;
         }
-
-        $v = trim($value);
         // akzeptiere "HH:MM" oder "HH:MM:SS"
-        if (preg_match('/^\d{2}:\d{2}$/', $v)) {
-            return $v.':00';
+        if (preg_match('/^\d{1,2}:\d{2}(:\d{2})?$/', $value)) {
+            return $value;
         }
-        if (preg_match('/^\d{2}:\d{2}:\d{2}$/', $v)) {
-            return $v;
-        }
-
-        try {
-            return Carbon::parse($v)->format('H:i:s');
-        } catch (Throwable) {
-            return null;
-        }
+        return null;
     }
 
-    private function resolveSwimstyleIdFromEventNode(SimpleXMLElement $eventNode): ?int
+    private function parseIntOrNull($v): ?int
     {
-        // LENEX hat oft <SWIMSTYLE .../> im EVENT
-        $sw = $eventNode->SWIMSTYLE ?? null;
-
-        $distance = (int) ($sw['distance'] ?? $eventNode['distance'] ?? 0);
-        $relaycount = (int) ($sw['relaycount'] ?? $eventNode['relaycount'] ?? 1);
-        if ($relaycount <= 0) {
-            $relaycount = 1;
-        }
-
-        $stroke = (string) ($sw['stroke'] ?? $eventNode['stroke'] ?? '');
-        $strokeCode = $this->normalizeStrokeCode($stroke);
-
-        if ($distance <= 0 || $strokeCode === '') {
+        if ($v === null || $v === '') {
             return null;
         }
-
-        $cacheKey = $distance.'|'.$relaycount.'|'.$strokeCode;
-        if (array_key_exists($cacheKey, $this->swimstyleIdCache)) {
-            return $this->swimstyleIdCache[$cacheKey];
-        }
-
-        $id = Swimstyle::query()
-            ->where('distance', $distance)
-            ->where('relaycount', $relaycount)
-            ->where('stroke_code', $strokeCode)
-            ->value('id');
-
-        $this->swimstyleIdCache[$cacheKey] = $id ?: null;
-
-        return $this->swimstyleIdCache[$cacheKey];
-    }
-
-    private function normalizeStrokeCode(string $raw): string
-    {
-        $s = strtoupper(trim($raw));
-
-        return match ($s) {
-            'FREESTYLE', 'FREE' => 'FREE',
-            'BACKSTROKE', 'BACK' => 'BACK',
-            'BREASTSTROKE', 'BREAST' => 'BREAST',
-            'BUTTERFLY', 'FLY' => 'FLY',
-            'IM', 'INDIVIDUALMEDLEY', 'MEDLEY' => 'MEDLEY',
-            default => $s,
-        };
-    }
-
-    private function parseDecimal(?string $value): ?string
-    {
-        if ($value === null || trim($value) === '') {
-            return null;
-        }
-        $v = str_replace(',', '.', trim($value));
-        return is_numeric($v) ? $v : null;
-    }
-
-    private function parseIntNullable(?string $value): ?int
-    {
-        if ($value === null || trim($value) === '') {
-            return null;
-        }
-        if (!is_numeric(trim($value))) {
-            return null;
-        }
-        return (int) trim($value);
-    }
-
-    /**
-     * Meet-gebunden (Wizard): importiert Struktur EXAKT in das übergebene Meet
-     * und setzt/aktualisiert meet_hash dev-friendly (nur Kollisionscheck ist hart).
-     * @throws Throwable
-     */
-    public function ensureMeetAndStructureForMeet(
-        SimpleXMLElement $lenexXml,
-        ParaMeet $meet,
-        bool $upsertStructure = true
-    ): ParaMeet {
-        $meetNode = $this->getMeetNode($lenexXml);
-        $hash = $this->buildMeetHash($meetNode);
-
-        // Kollisionscheck: derselbe Hash darf nicht schon einem anderen Meet gehören
-        $collision = ParaMeet::where('meet_hash', $hash)
-            ->where('id', '!=', $meet->id)
-            ->first();
-
-        if ($collision) {
-            throw new RuntimeException('LENEX-Datei gehört zu einem anderen Meeting (meet_hash kollidiert).');
-        }
-
-        // Dev-friendly: Hash am aktuellen Meet setzen/aktualisieren
-        if ($meet->meet_hash !== $hash) {
-            $meet->forceFill(['meet_hash' => $hash])->save();
-        }
-
-        // Meet-Metadaten updaten (optional)
-        if ($upsertStructure) {
-            $meet->fill($this->onlyMeetColumns([
-                'name' => (string) ($meetNode['name'] ?? $meet->name),
-                'city' => (string) ($meetNode['city'] ?? $meet->city),
-                'course' => (string) ($meetNode['course'] ?? $meet->course),
-
-                'entry_start_date' => $this->parseDate((string) ($meetNode['entrystartdate'] ?? null)),
-                'entry_deadline' => $this->parseDate((string) ($meetNode['deadline'] ?? null)),
-                'withdraw_until' => $this->parseDate((string) ($meetNode['withdrawuntil'] ?? null)),
-                'entry_type' => (string) ($meetNode['entrytype'] ?? null),
-
-                'host_club' => (string) ($meetNode['hostclub'] ?? null),
-                'organizer' => (string) ($meetNode['organizer'] ?? null),
-                'organizer_url' => (string) ($meetNode['organizerurl'] ?? null),
-                'result_url' => (string) ($meetNode['resulturl'] ?? null),
-
-                'lenex_revisiondate' => $this->parseDate((string) ($meetNode['revisiondate'] ?? null)),
-                'lenex_created' => $this->parseDateTime((string) ($meetNode['created'] ?? null)),
-            ]))->save();
-        }
-
-        return $this->importStructureIntoMeet($meet, $meetNode, $upsertStructure);
-    }
-
-    private function parseDateTime(?string $value): ?string
-    {
-        if (!$value) {
-            return null;
-        }
-        try {
-            return Carbon::parse($value)->toDateTimeString();
-        } catch (Throwable) {
-            return null;
-        }
+        return (int) $v;
     }
 }

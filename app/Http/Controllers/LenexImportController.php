@@ -6,7 +6,7 @@ use App\Models\ParaAthlete;
 use App\Models\ParaClub;
 use App\Models\ParaMeet;
 use App\Services\Lenex\LenexImportService;
-use App\Services\Lenex\LenexResultImporter;
+use App\Services\Lenex\LenexResultsImporter;
 use Closure;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -217,7 +217,7 @@ class LenexImportController extends Controller
     public function importResults(
         Request $request,
         ParaMeet $meet,
-        LenexResultImporter $importer
+        LenexResultsImporter $importer
     ) {
         // WICHTIG: KEIN $request->validate() -> sonst back() auf POST-URL
         $validator = Validator::make($request->all(), [

@@ -19,10 +19,6 @@ readonly class LenexPreviewSupport
     ) {
     }
 
-    /**
-     * Einheitlicher "Result Context" für Athlete-Results und Relay-Results.
-     * Entfernt Duplicate-Code: resultid/eventid/swimtime lesen + event lookup + initiale warnings.
-     */
     public function initResultContext(
         SimpleXMLElement $resNode,
         array $eventByLenexId,
@@ -30,20 +26,15 @@ readonly class LenexPreviewSupport
     ): array {
         $resultId = (string) ($resNode['resultid'] ?? '');
         $lenexEventId = (string) ($resNode['eventid'] ?? '');
-        $swimtimeStr = trim((string) ($resNode['swimtime'] ?? $resNode['SWIMTIME'] ?? ''));
-
-        if ($swimtimeStr === '' && isset($resNode->SWIMTIME)) {
-            $swimtimeStr = trim((string) $resNode->SWIMTIME);
-        }
+        $swimtimeStr = trim((string) ($resNode['swimtime'] ?? ''));
 
         $invalidReasons = [];
 
         /** @var ParaEvent|null $event */
         $event = $lenexEventId !== '' ? ($eventByLenexId[$lenexEventId] ?? null) : null;
 
-        $this->addMissingEvent($invalidReasons, $event, $lenexEventId);
-        if ($dbClub !== null) {
-            $this->addMissingClub($invalidReasons, $dbClub);
+        if (!$event) {
+            $invalidReasons[] = "Event {$lenexEventId} nicht im Meeting vorhanden";
         }
 
         return [
@@ -55,18 +46,9 @@ readonly class LenexPreviewSupport
         ];
     }
 
-    public function addMissingEvent(array &$reasons, ?ParaEvent $event, string $lenexEventId): void
+    public function parseTimeToMs(?string $time): ?int
     {
-        if (!$event) {
-            $reasons[] = "Event {$lenexEventId} nicht im Meeting vorhanden";
-        }
-    }
-
-    public function addMissingClub(array &$reasons, ?ParaClub $club): void
-    {
-        if (!$club) {
-            $reasons[] = 'Verein im System nicht gefunden (para_clubs)';
-        }
+        return $this->lenex->parseTimeToMs($time);
     }
 
     public function athleteInClub(?ParaAthlete $athlete, ?ParaClub $club): bool
@@ -77,59 +59,30 @@ readonly class LenexPreviewSupport
         if (!$athlete->para_club_id || !$club->id) {
             return true;
         }
-
         return (int) $athlete->para_club_id === (int) $club->id;
     }
 
-    public function addAthleteDbReasons(
-        array &$reasons,
+    /**
+     * Numeric part for relay point rules (S20/S34/S49).
+     */
+    public function athleteSportClassNumberForStroke(
         ?ParaAthlete $athlete,
-        bool $inClub,
-        string $first,
-        string $last,
-        string $lenexAthleteId,
-        string $clubName
-    ): void {
-        if (!$athlete) {
-            $reasons[] = "Athlet {$last}, {$first} ({$lenexAthleteId}) nicht in para_athletes gefunden";
-            return;
-        }
-
-        if (!$inClub) {
-            $reasons[] = "Athlet {$last}, {$first} gehört nicht zu Verein {$clubName}";
-        }
-    }
-
-    public function parseTimeToMs(?string $time): ?int
-    {
-        return $this->lenex->parseTimeToMs($time);
-    }
-
-    public function findAthleteByName(?string $first, ?string $last, ?string $birthdate = null): ?ParaAthlete
-    {
-        $first = trim((string) $first);
-        $last = trim((string) $last);
-
-        if ($first === '' || $last === '') {
+        ?SimpleXMLElement $lenexAthNode,
+        string $strokeCode
+    ): ?int {
+        $label = $this->athleteSportClassLabelForStroke($athlete, $lenexAthNode, $strokeCode);
+        if (!$label) {
             return null;
         }
-
-        $q = ParaAthlete::query()
-            ->with('club')
-            ->whereRaw('LOWER(firstName) = ?', [mb_strtolower($first)])
-            ->whereRaw('LOWER(lastName) = ?', [mb_strtolower($last)]);
-
-        $birthdate = trim((string) $birthdate);
-        if ($birthdate !== '') {
-            $q->whereDate('birthdate', $birthdate);
+        if (preg_match('/(\d+)/', $label, $m)) {
+            return (int) $m[1];
         }
-
-        return $q->first();
+        return null;
     }
 
     /**
-     * Liefert z.B. "S14", "SB6", "SM10" oder null.
-     * DB first, fallback auf LENEX ATHLETE/HANDICAP (free/breast/medley).
+     * Returns label like "S8"/"SB7"/"SM10" or null.
+     * DB first (sportclass_s/sb/sm), fallback to LENEX HANDICAP (numeric).
      */
     public function athleteSportClassLabelForStroke(
         ?ParaAthlete $athlete,
@@ -138,29 +91,35 @@ readonly class LenexPreviewSupport
     ): ?string {
         $prefix = $this->strokeToClassPrefix($strokeCode);
 
-        // 1) DB: sportclass_s / sportclass_sb / sportclass_sm
-        $dbNum = null;
+        // 1) DB fields (your migration uses sportclass_s/sb/sm as strings, often already "S8")
+        $dbVal = null;
+
         if ($athlete) {
             $field = match ($prefix) {
-                'SB' => ['sportclass_sb', 'Sportclass_sb'],
-                'SM' => ['sportclass_sm', 'Sportclass_sm'],
-                default => ['sportclass_s', 'Sportclass_s'],
+                'SB' => ['sportclass_sb'],
+                'SM' => ['sportclass_sm'],
+                default => ['sportclass_s'],
             };
 
             foreach ($field as $f) {
-                $val = $athlete->{$f} ?? null;
-                if ($val !== null && $val !== '' && ctype_digit((string) $val)) {
-                    $dbNum = (int) $val;
+                $val = trim((string) ($athlete->{$f} ?? ''));
+                if ($val !== '') {
+                    $dbVal = $val;
                     break;
                 }
             }
         }
 
-        if ($dbNum !== null) {
-            return $prefix.$dbNum;
+        if ($dbVal) {
+            // if stored as "7" => prefix it
+            if (ctype_digit($dbVal)) {
+                return $prefix.(int) $dbVal;
+            }
+            // if stored as "SB7"/"S8"/"SM10" => return as-is
+            return $dbVal;
         }
 
-        // 2) LENEX fallback: ATHLETE/HANDICAP free|breast|medley
+        // 2) LENEX fallback (numeric)
         if ($lenexAthNode && ($lenexAthNode->HANDICAP ?? null) instanceof SimpleXMLElement) {
             $hc = $lenexAthNode->HANDICAP;
 
@@ -186,13 +145,10 @@ readonly class LenexPreviewSupport
         if (in_array($strokeCode, ['BREAST', 'BREASTSTROKE'], true)) {
             return 'SB';
         }
-
         if (in_array($strokeCode, ['MEDLEY', 'IM'], true)) {
             return 'SM';
         }
-
-        // FREE, BACK, FLY -> S
-        return 'S';
+        return 'S'; // FREE/BACK/FLY
     }
 
     /**

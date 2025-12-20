@@ -5,650 +5,815 @@
         $resultsClubs = $doResults ? ($resultsData['clubs'] ?? []) : [];
         $relaysClubs  = $doRelays  ? ($relaysData['clubs'] ?? [])  : [];
 
-        // stabile club keys (Nation + Clubname)
         $clubKeyFn = function ($nation, $clubName) {
             return md5(((string)($nation ?? '')) . '|' . ((string)($clubName ?? '')));
         };
-
-        // RESULTS Tree: Nation -> Clubs -> Athletes
-        $resultsTree = collect($resultsClubs)
-            ->groupBy('nation')
-            ->map(function($clubs, $nation) use ($clubKeyFn) {
-                return collect($clubs)->map(function($club) use ($nation, $clubKeyFn) {
-                    $clubName = $club['club_name'] ?? '';
-                    $clubKey  = $clubKeyFn($nation, $clubName);
-
-                    $rows = collect($club['rows'] ?? []);
-
-                    $athletes = $rows
-                        ->groupBy('lenex_athlete_id')
-                        ->map(function($aRows, $athId) {
-                            $r = $aRows->first();
-                            $name = trim(($r['last_name'] ?? '').', '.($r['first_name'] ?? ''), ', ');
-                            return [
-                                'athlete_id' => (string)$athId, // LENEX athleteid
-                                'name'       => $name !== '' ? $name : ('Athlete '.$athId),
-                                'count'      => $aRows->count(),
-                            ];
-                        })
-                        ->values();
-
-                    return [
-                        'club_name' => $clubName,
-                        'club_key'  => $clubKey,
-                        'athletes'  => $athletes,
-                    ];
-                })->values();
-            });
-
-        // RELAYS Tree: Nation -> Clubs -> Relay rows
-        $relaysTree = collect($relaysClubs)
-            ->groupBy('nation')
-            ->map(function($clubs, $nation) use ($clubKeyFn) {
-                return collect($clubs)->map(function($club) use ($nation, $clubKeyFn) {
-                    $clubName = $club['club_name'] ?? '';
-                    $clubKey  = $clubKeyFn($nation, $clubName);
-
-                    $relays = collect($club['relay_rows'] ?? [])->map(function($row) {
-                        $key = $row['lenex_resultid'] ?: ($row['result_id'] ?? '');
-                        $label = trim(($row['relay_event_label'] ?? '—').' · #'.($row['relay_number'] ?? '—'));
-                        if (!empty($row['relay_sportclass'])) $label .= ' · '.$row['relay_sportclass'];
-
-                        return [
-                            'key'     => (string)$key,
-                            'label'   => $label,
-                            'invalid' => (bool)($row['invalid'] ?? false),
-                        ];
-                    })->values();
-
-                    return [
-                        'club_name' => $clubName,
-                        'club_key'  => $clubKey,
-                        'relays'    => $relays,
-                    ];
-                })->values();
-            });
     @endphp
 
     <div class="container py-4">
-        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
-            <div>
-                <h1 class="mb-1">LENEX Import Wizard – Preview</h1>
-                <div class="text-muted">
-                    <strong>Meet:</strong> {{ $meet->name }}<br>
-                    {{ $meet->city }}
-                </div>
-            </div>
-
-            <div class="d-flex gap-3 pt-2">
-                <a href="{{ route('meets.lenex.results-wizard.form', $meet) }}">New file</a>
-                <a href="{{ route('meets.show', $meet) }}">Back to Meet</a>
-            </div>
-        </div>
+        <h2 class="mb-3">LENEX Wizard Preview</h2>
 
         <form method="POST" action="{{ route('meets.lenex.results-wizard.import', $meet) }}">
             @csrf
-            <input type="hidden" name="lenex_file_path"
-                   value="{{ is_string($lenexFilePath ?? null) ? $lenexFilePath : '' }}">
-            <input type="hidden" name="do_results" value="{{ $doResults ? 1 : 0 }}">
-            <input type="hidden" name="do_relays" value="{{ $doRelays ? 1 : 0 }}">
+            <input type="hidden" name="lenex_file_path" value="{{ $lenexFilePath }}">
 
-            <div class="row g-3">
-                {{-- LEFT: Selection --}}
-                <div class="col-lg-4">
+            <div class="row g-4">
+                {{-- LEFT --}}
+                <div class="col-12 col-lg-4">
                     <div class="card">
-                        <div class="card-header">
-                            <strong>Auswahl für Import</strong>
-                        </div>
-
+                        <div class="card-header fw-semibold">Auswahl / Filter</div>
                         <div class="card-body">
+
                             <div class="form-check mb-3">
-                                <input class="form-check-input" type="checkbox" id="showSelectedOnly">
-                                <label class="form-check-label" for="showSelectedOnly">nur ausgewählte anzeigen</label>
+                                <input class="form-check-input" type="checkbox" id="onlySelected" checked>
+                                <label class="form-check-label" for="onlySelected">nur ausgewählte anzeigen</label>
+                                <div class="text-muted small mt-1">
+                                    Zeigt nur Zeilen an, deren Import-Checkbox aktiviert ist.
+                                </div>
                             </div>
 
-                            @if($doResults)
-                                <div class="mb-4">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <strong>Athleten</strong>
-                                        <button type="button" class="btn btn-sm btn-outline-secondary"
-                                                id="toggleAllResults">
-                                            Alle gültigen
-                                        </button>
-                                    </div>
+                            <div class="d-flex flex-wrap gap-2 mb-3">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="selectAllValid">
+                                    Alle gültigen Results
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="unselectAllResults">
+                                    Results abwählen
+                                </button>
 
-                                    <div class="mt-2">
-                                        @foreach($resultsTree as $nation => $clubs)
-                                            <details class="mb-2" open>
-                                                <summary class="d-flex align-items-center gap-2">
-                                                    <input type="checkbox"
-                                                           class="form-check-input tree-results-nation"
-                                                           data-nation="{{ $nation ?? '' }}">
-                                                    <span>{{ $nation ?: '—' }}</span>
-                                                </summary>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="selectAllRelays">
+                                    Alle gültigen Relays
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="unselectAllRelays">
+                                    Relays abwählen
+                                </button>
+                            </div>
 
-                                                <div class="ms-4 mt-2">
-                                                    @foreach($clubs as $club)
-                                                        @php $clubKey = $club['club_key']; @endphp
+                            @php
+                                // Nation/Club Tree aus Results + Relays
+                                $tree = [];
 
-                                                        <details class="mb-2" open>
-                                                            <summary class="d-flex align-items-center gap-2">
-                                                                <input type="checkbox"
-                                                                       class="form-check-input tree-results-club"
-                                                                       data-nation="{{ $nation ?? '' }}"
-                                                                       data-club="{{ $clubKey }}">
-                                                                <span>{{ $club['club_name'] ?: '—' }}</span>
-                                                            </summary>
+                                // 1) Results rein
+                                foreach ($resultsClubs as $club) {
+                                    $nation = $club['nation'] ?? '';
+                                    $clubName = $club['club_name'] ?? '';
+                                    $clubKey = $clubKeyFn($nation, $clubName);
 
-                                                            <div class="ms-4 mt-2">
-                                                                @foreach($club['athletes'] as $ath)
+                                    $tree[$nation][$clubKey]['club_name'] = $clubName;
+                                    $tree[$nation][$clubKey]['club_id'] = $club['club_id'] ?? null;
+                                    $tree[$nation][$clubKey]['results_count'] = ($tree[$nation][$clubKey]['results_count'] ?? 0) + count($club['rows'] ?? []);
+                                    $tree[$nation][$clubKey]['relays_count']  = $tree[$nation][$clubKey]['relays_count'] ?? 0;
+
+                                    foreach (($club['rows'] ?? []) as $row) {
+                                        $aid = (string)($row['lenex_athlete_id'] ?? '');
+                                        if ($aid === '') continue;
+
+                                        $tree[$nation][$clubKey]['athletes'][$aid] = $tree[$nation][$clubKey]['athletes'][$aid] ?? [
+                                            'label' => ($row['last_name'] ?? '').', '.($row['first_name'] ?? ''),
+                                            'count' => 0,
+                                        ];
+                                        $tree[$nation][$clubKey]['athletes'][$aid]['count']++;
+                                    }
+                                }
+
+                                // 2) Relays rein (damit Clubs/Nationen im Filter sichtbar sind, auch ohne Results)
+                                foreach ($relaysClubs as $club) {
+                                    $nation = $club['nation'] ?? '';
+                                    $clubName = $club['club_name'] ?? '';
+                                    $clubKey = $clubKeyFn($nation, $clubName);
+
+                                    $tree[$nation][$clubKey]['club_name'] = $tree[$nation][$clubKey]['club_name'] ?? $clubName;
+                                    $tree[$nation][$clubKey]['club_id']   = $tree[$nation][$clubKey]['club_id'] ?? ($club['club_id'] ?? null);
+                                    $tree[$nation][$clubKey]['results_count'] = $tree[$nation][$clubKey]['results_count'] ?? 0;
+                                    $tree[$nation][$clubKey]['relays_count']  = ($tree[$nation][$clubKey]['relays_count'] ?? 0) + count($club['relay_rows'] ?? []);
+
+                                    // keine athletes hier – Relays sind club/nation filterbar, athlete-tree bleibt für results
+                                    $tree[$nation][$clubKey]['athletes'] = $tree[$nation][$clubKey]['athletes'] ?? [];
+                                }
+
+                                ksort($tree);
+                            @endphp
+
+
+                            <div class="fw-semibold mb-2">Tree (setzt Import-Checkboxen)</div>
+
+                            @if(empty($tree))
+                                <div class="text-muted small">Keine Athlete Results gefunden.</div>
+                            @else
+                                <div class="small" id="selectionTree">
+                                    @foreach($tree as $nation => $clubs)
+                                        @php $nid = 'n_'.md5($nation); @endphp
+
+                                        <div class="mb-2">
+                                            <div class="form-check">
+                                                <input class="form-check-input tree-nation" type="checkbox"
+                                                       id="{{ $nid }}"
+                                                       data-nation="{{ $nation }}">
+                                                <label class="form-check-label fw-semibold" for="{{ $nid }}">
+                                                    {{ $nation ?: '—' }}
+                                                </label>
+                                            </div>
+
+                                            <div class="ms-3 mt-1">
+                                                @foreach($clubs as $clubKey => $cdata)
+                                                    @php
+                                                        $cid = 'c_'.md5($nation.'|'.$clubKey);
+                                                        $cname = $cdata['club_name'] ?? '';
+                                                    @endphp
+                                                    <div class="mb-1">
+                                                        <div class="form-check">
+                                                            <input class="form-check-input tree-club" type="checkbox"
+                                                                   id="{{ $cid }}"
+                                                                   data-nation="{{ $nation }}"
+                                                                   data-club="{{ $clubKey }}">
+                                                            @php
+                                                                $rc = (int)($cdata['results_count'] ?? 0);
+                                                                $lc = (int)($cdata['relays_count'] ?? 0);
+                                                            @endphp
+
+                                                            <label class="form-check-label" for="{{ $cid }}">
+                                                                {{ $cname ?: '—' }}
+                                                                <span class="text-muted ms-1">[Results: {{ $rc }} | Relays: {{ $lc }}]</span>
+                                                            </label>
+                                                        </div>
+
+                                                        <div class="ms-3 mt-1">
+
+                                                            @foreach(($cdata['athletes'] ?? []) as $aid => $adata)
+                                                                @if(!empty($cdata['athletes']))
+                                                                    @php
+                                                                        $aidId = 'a_'.md5($nation.'|'.$clubKey.'|'.$aid);
+                                                                    @endphp
                                                                     <div class="form-check">
-                                                                        <input
-                                                                            class="form-check-input tree-results-athlete"
-                                                                            type="checkbox"
-                                                                            data-nation="{{ $nation ?? '' }}"
-                                                                            data-club="{{ $clubKey }}"
-                                                                            data-athlete="{{ $ath['athlete_id'] }}">
-                                                                        <label class="form-check-label">
-                                                                            {{ $ath['name'] }}
-                                                                            <span class="text-muted small">({{ $ath['count'] }})</span>
+                                                                        <input class="form-check-input tree-athlete"
+                                                                               type="checkbox"
+                                                                               id="{{ $aidId }}"
+                                                                               data-nation="{{ $nation }}"
+                                                                               data-club="{{ $clubKey }}"
+                                                                               data-athlete="{{ $aid }}">
+                                                                        <label class="form-check-label"
+                                                                               for="{{ $aidId }}">
+                                                                            {{ $adata['label'] ?? '—' }}
+                                                                            <span class="text-muted">({{ $adata['count'] ?? 0 }})</span>
                                                                         </label>
                                                                     </div>
-                                                                @endforeach
-                                                            </div>
-                                                        </details>
-                                                    @endforeach
-                                                </div>
-                                            </details>
-                                        @endforeach
-                                    </div>
+                                                                @else
+                                                                    <div class="text-muted small">keine Athlete
+                                                                        Results
+                                                                    </div>
+                                                                @endif
+                                                            @endforeach
+                                                        </div>
+                                                    </div>
+                                                @endforeach
+                                            </div>
+                                        </div>
+                                    @endforeach
                                 </div>
                             @endif
 
-                            @if($doRelays)
-                                <div class="mb-1">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <strong>Staffeln</strong>
-                                        <button type="button" class="btn btn-sm btn-outline-secondary"
-                                                id="toggleAllRelays">
-                                            Alle gültigen
-                                        </button>
-                                    </div>
-
-                                    <div class="mt-2">
-                                        @foreach($relaysTree as $nation => $clubs)
-                                            <details class="mb-2" open>
-                                                <summary class="d-flex align-items-center gap-2">
-                                                    <input type="checkbox"
-                                                           class="form-check-input tree-relays-nation"
-                                                           data-nation="{{ $nation ?? '' }}">
-                                                    <span>{{ $nation ?: '—' }}</span>
-                                                </summary>
-
-                                                <div class="ms-4 mt-2">
-                                                    @foreach($clubs as $club)
-                                                        @php $clubKey = $club['club_key']; @endphp
-
-                                                        <details class="mb-2" open>
-                                                            <summary class="d-flex align-items-center gap-2">
-                                                                <input type="checkbox"
-                                                                       class="form-check-input tree-relays-club"
-                                                                       data-nation="{{ $nation ?? '' }}"
-                                                                       data-club="{{ $clubKey }}">
-                                                                <span>{{ $club['club_name'] ?: '—' }}</span>
-                                                            </summary>
-
-                                                            <div class="ms-4 mt-2">
-                                                                @foreach($club['relays'] as $r)
-                                                                    <div class="form-check">
-                                                                        <input
-                                                                            class="form-check-input tree-relays-relay"
-                                                                            type="checkbox"
-                                                                            data-nation="{{ $nation ?? '' }}"
-                                                                            data-club="{{ $clubKey }}"
-                                                                            data-relay="{{ $r['key'] }}"
-                                                                            {{ $r['invalid'] ? 'disabled' : '' }}>
-                                                                        <label
-                                                                            class="form-check-label {{ $r['invalid'] ? 'text-danger' : '' }}">
-                                                                            {{ $r['label'] }}
-                                                                        </label>
-                                                                    </div>
-                                                                @endforeach
-                                                            </div>
-                                                        </details>
-                                                    @endforeach
-                                                </div>
-                                            </details>
-                                        @endforeach
-                                    </div>
-                                </div>
-                            @endif
-
-                            <hr class="my-3">
-
-                            <button type="submit" class="btn btn-primary w-100">
-                                Import selected
-                            </button>
                         </div>
                     </div>
                 </div>
 
-                {{-- RIGHT: Preview tables --}}
-                <div class="col-lg-8">
+                {{-- RIGHT --}}
+                <div class="col-12 col-lg-8">
+
+                    {{-- RESULTS --}}
                     @if($doResults)
-                        <h2 class="mb-2">Athlete Results</h2>
+                        <div class="card mb-3">
+                            <div class="card-header fw-semibold">Athlete Results</div>
+                            <div class="card-body">
 
-                        @foreach(($resultsClubs ?? []) as $club)
-                            @php
-                                $nation   = $club['nation'] ?? '';
-                                $clubName = $club['club_name'] ?? '';
-                                $clubKey  = $clubKeyFn($nation, $clubName);
-                                $rows     = $club['rows'] ?? [];
-                            @endphp
+                                @forelse($resultsClubs as $club)
+                                    @php
+                                        $nation = $club['nation'] ?? '';
+                                        $clubName = $club['club_name'] ?? '';
+                                        $clubKey = $clubKeyFn($nation, $clubName);
 
-                            <div class="mb-4 result-club-block"
-                                 data-block-type="result"
-                                 data-nation="{{ $nation }}"
-                                 data-club="{{ $clubKey }}">
-                                <div class="fw-semibold mb-2">
-                                    {{ $clubName ?: '—' }} <span class="text-muted">{{ $nation }}</span>
-                                </div>
+                                        $lenexClubId = $club['club_id'] ?? null;
+                                        $clubSelected = $lenexClubId ? old("club_match.$lenexClubId", $club['club_match_selected'] ?? 'auto') : 'auto';
+                                        $clubCands = $club['club_match_candidates'] ?? [];
+                                    @endphp
 
-                                <div class="table-responsive">
-                                    <table class="table table-sm align-middle">
-                                        <thead>
-                                        <tr>
-                                            <th style="width: 70px;">Import</th>
-                                            <th>Event</th>
-                                            <th>Athlete</th>
-                                            <th style="width: 110px;">Time</th>
-                                            <th style="width: 180px;">Splits</th>
-                                            <th>Warnings</th>
-                                        </tr>
-                                        </thead>
-                                        <tbody>
-                                        @foreach($rows as $row)
-                                            @php
-                                                $athId   = (string)($row['lenex_athlete_id'] ?? '');
-                                                $rowKey  = (string)(($row['lenex_resultid'] ?? '') ?: ($row['result_id'] ?? ''));
-                                                $invalid = (bool)($row['invalid'] ?? false);
-                                                $eventLabel = $row['event_label'] ?? $row['event'] ?? '—';
-                                                $athName = trim(($row['last_name'] ?? '').', '.($row['first_name'] ?? ''), ', ');
-                                                $time = $row['time_fmt'] ?? ($row['swimtime'] ?? '—');
-                                                $splits = $row['splits_label'] ?? $row['splits'] ?? '—';
-                                                $warnings = $row['invalid_reasons'] ?? [];
-                                                if (is_string($warnings)) $warnings = [$warnings];
-                                                $sportClassLabel = $row['sport_class_label'] ?? null;
-                                                $birthYear = $row['birth_year'] ?? null;
-                                            @endphp
+                                    <div class="result-club-block mb-4"
+                                         data-nation="{{ $nation }}"
+                                         data-club="{{ $clubKey }}">
+                                        <div class="d-flex align-items-start justify-content-between gap-2">
+                                            <div>
+                                                <h6 class="mb-1">{{ $clubName ?: '—' }} <small
+                                                        class="text-muted">{{ $nation }}</small></h6>
+                                                <div class="text-muted small">LENEX
+                                                    clubid: {{ $lenexClubId ?: '—' }}</div>
+                                            </div>
 
-                                            <tr data-row-type="result"
-                                                data-nation="{{ $nation }}"
-                                                data-club="{{ $clubKey }}"
-                                                data-athlete="{{ $athId }}"
-                                                class="{{ $invalid ? 'table-danger' : '' }}">
-                                                <td>
-                                                    <input class="form-check-input result-cb"
-                                                           type="checkbox"
-                                                           name="selected_results[]"
-                                                           value="{{ $rowKey }}"
-                                                           data-row-key="{{ $rowKey }}"
-                                                        {{ $invalid ? 'disabled' : '' }}>
-                                                </td>
-                                                <td>
-                                                    <div class="fw-semibold">{{ $eventLabel }}</div>
-                                                    <div class="text-muted small">
-                                                        @if(!empty($row['lenex_eventid']))
-                                                            LENEX eventid: {{ $row['lenex_eventid'] }}
-                                                        @endif
-                                                    </div>
-                                                </td>
-                                                <td>
-                                                    <div
-                                                        class="fw-semibold">{{ $athName !== '' ? $athName : ('Athlete '.$athId) }}</div>
-                                                    <div class="text-muted small">
-                                                        @if(!empty($sportClassLabel))
-                                                            {{ $sportClassLabel }}
-                                                        @endif
-                                                        @if(!empty($birthYear))
-                                                            ({{ $birthYear }})
-                                                        @endif
-                                                        <span class="ms-2">LENEX athleteid: {{ $athId }}</span>
-                                                    </div>
-                                                </td>
-                                                <td>{{ $time }}</td>
-                                                <td class="text-muted">
-                                                    @if(is_array($splits) && !empty($splits))
-                                                        @foreach($splits as $sp)
-                                                            @php
-                                                                $dist = $sp['distance'] ?? null;
-                                                                $tf   = $sp['time_fmt'] ?? ($sp['swimtime'] ?? '—');
-                                                            @endphp
-                                                            <div>{{ $dist ? ($dist.' m: '.$tf) : $tf }}</div>
-                                                        @endforeach
-                                                    @else
-                                                        {{ is_scalar($splits) ? $splits : '—' }}
-                                                    @endif
-                                                </td>
+                                            @if($lenexClubId)
+                                                <div style="min-width: 320px; max-width: 520px;">
+                                                    <label class="form-label small text-muted mb-1">Club-Match</label>
+                                                    <select name="club_match[{{ $lenexClubId }}]"
+                                                            class="form-select form-select-sm club-match"
+                                                            data-clubid="{{ $lenexClubId }}">
+                                                        <option
+                                                            value="auto" {{ (string)$clubSelected === 'auto' ? 'selected' : '' }}>
+                                                            Auto (tmId/Name)
+                                                        </option>
+                                                        <option
+                                                            value="new" {{ (string)$clubSelected === 'new' ? 'selected' : '' }}>
+                                                            Neuen Club anlegen
+                                                        </option>
 
-                                                <td>
-                                                    @if(!empty($warnings))
-                                                        <ul class="mb-0 ps-3">
-                                                            @foreach($warnings as $w)
-                                                                <li>{{ $w }}</li>
+                                                        @if(!empty($clubCands))
+                                                            <option disabled>──────────</option>
+                                                            @foreach($clubCands as $c)
+                                                                @php
+                                                                    $cid = (int)($c['id'] ?? 0);
+                                                                    $score = (int)($c['score'] ?? 0);
+                                                                    $label = (string)($c['label'] ?? '');
+                                                                    $sel = ((string)$clubSelected === (string)$cid) ? 'selected' : '';
+                                                                @endphp
+                                                                <option value="{{ $cid }}" {{ $sel }}>
+                                                                    [{{ $score }}] {{ $label }}
+                                                                </option>
                                                             @endforeach
-                                                        </ul>
-                                                    @else
-                                                        —
-                                                    @endif
-                                                </td>
-                                            </tr>
-                                        @endforeach
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        @endforeach
-                    @endif
-
-                    @if($doRelays)
-                        <h2 class="mb-2">Relays</h2>
-
-                        @foreach(($relaysClubs ?? []) as $club)
-                            @php
-                                $nation   = $club['nation'] ?? '';
-                                $clubName = $club['club_name'] ?? '';
-                                $clubKey  = $clubKeyFn($nation, $clubName);
-                                $rows     = $club['relay_rows'] ?? [];
-                            @endphp
-
-                            <div class="mb-4 relay-club-block"
-                                 data-block-type="relay"
-                                 data-nation="{{ $nation }}"
-                                 data-club="{{ $clubKey }}">
-                                <div class="fw-semibold mb-2">
-                                    {{ $clubName ?: '—' }} <span class="text-muted">{{ $nation }}</span>
-                                </div>
-
-                                <div class="table-responsive">
-                                    <table class="table table-sm align-middle">
-                                        <thead>
-                                        <tr>
-                                            <th style="width: 70px;">Import</th>
-                                            <th>Relay</th>
-                                            <th>Time</th>
-                                            <th>Warnings</th>
-                                        </tr>
-                                        </thead>
-                                        <tbody>
-                                        @foreach($rows as $row)
-                                            @php
-                                                $rowKey  = (string)(($row['lenex_resultid'] ?? '') ?: ($row['result_id'] ?? ''));
-                                                $invalid = (bool)($row['invalid'] ?? false);
-                                                $label   = $row['relay_event_label'] ?? '—';
-                                                $num     = $row['relay_number'] ?? '—';
-                                                $time = $row['swimtime_fmt'] ?? ($row['swimtime'] ?? '—');
-                                                $warnings = $row['warnings'] ?? [];
-                                                if (is_string($warnings)) $warnings = [$warnings];
-                                            @endphp
-
-                                            <tr data-row-type="relay"
-                                                data-nation="{{ $nation }}"
-                                                data-club="{{ $clubKey }}"
-                                                data-relay="{{ $rowKey }}"
-                                                class="{{ $invalid ? 'table-danger' : '' }}">
-                                                <td>
-                                                    <input class="form-check-input relay-cb"
-                                                           type="checkbox"
-                                                           name="selected_relays[]"
-                                                           value="{{ $rowKey }}"
-                                                           data-row-key="{{ $rowKey }}"
-                                                        {{ $invalid ? 'disabled' : '' }}>
-                                                </td>
-                                                <td>
-                                                    <div class="fw-semibold">{{ $label }} · #{{ $num }}</div>
-                                                    <div class="text-muted small">
-                                                        @if(!empty($row['relay_sportclass']))
-                                                            {{ $row['relay_sportclass'] }}
                                                         @endif
-                                                    </div>
-                                                </td>
-                                                <td>{{ $time }}</td>
-                                                <td>
+                                                    </select>
+                                                </div>
+                                            @endif
+                                        </div>
+
+                                        <div class="table-responsive mt-2">
+                                            <table class="table table-sm align-middle">
+                                                <thead>
+                                                <tr>
+                                                    <th style="width:80px;">Import</th>
+                                                    <th>Event</th>
+                                                    <th>Athlete</th>
+                                                    <th style="width:110px;">Time</th>
+                                                    <th>Splits</th>
+                                                    <th>Warnings</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                @foreach(($club['rows'] ?? []) as $row)
                                                     @php
-                                                        $reasons = $row['invalid_reasons'] ?? ($row['warnings'] ?? []);
-                                                        if (is_string($reasons)) $reasons = [$reasons];
+                                                        $invalid = (bool)($row['invalid'] ?? false);
+                                                        $warnings = $row['warnings'] ?? [];
+                                                        $blockers = $row['invalid_reasons'] ?? [];
+                                                        $hasWarn = !empty($warnings);
+                                                        $rowClass = $invalid ? 'table-danger' : ($hasWarn ? 'table-warning' : '');
+                                                        $athId = (string)($row['lenex_athlete_id'] ?? '');
+                                                        $rowKey = (string)($row['result_key'] ?? '');
+                                                        $selectedMatch = old("athlete_match.$athId", $row['match_selected'] ?? 'auto');
+                                                        $cands = $row['match_candidates'] ?? [];
                                                     @endphp
-                                                    @if(!empty($reasons))
-                                                        <ul class="mb-0 ps-3">
-                                                            @foreach($reasons as $r)
-                                                                <li>{{ $r }}</li>
+
+                                                    <tr data-row-type="result"
+                                                        data-nation="{{ $nation }}"
+                                                        data-club="{{ $clubKey }}"
+                                                        data-athlete="{{ $athId }}"
+                                                        class="{{ $rowClass }}">
+                                                        <td>
+                                                            <input class="form-check-input result-cb"
+                                                                   type="checkbox"
+                                                                   name="selected_results[]"
+                                                                   value="{{ $rowKey }}"
+                                                                   data-row-key="{{ $rowKey }}"
+                                                                {{ $invalid ? 'disabled' : '' }}>
+                                                        </td>
+
+                                                        <td>
+                                                            <strong>{{ $row['event_label'] ?? '—' }}</strong>
+                                                            <div class="text-muted small">LENEX
+                                                                eventid: {{ $row['lenex_eventid'] ?? '—' }}</div>
+                                                        </td>
+
+                                                        <td>
+                                                            <div>
+                                                                {{ ($row['last_name'] ?? '—') }}
+                                                                , {{ ($row['first_name'] ?? '') }}
+                                                                @if(!empty($row['sport_class_label']))
+                                                                    <span
+                                                                        class="badge bg-secondary ms-2">{{ $row['sport_class_label'] }}</span>
+                                                                @endif
+                                                                @if(!empty($row['birth_year']))
+                                                                    <span class="text-muted ms-2">({{ $row['birth_year'] }})</span>
+                                                                @endif
+                                                            </div>
+                                                            <div class="text-muted small">LENEX
+                                                                athleteid: {{ $athId ?: '—' }}</div>
+
+                                                            @if($athId !== '')
+                                                                <div class="mt-1">
+                                                                    <select name="athlete_match[{{ $athId }}]"
+                                                                            class="form-select form-select-sm athlete-match"
+                                                                            data-athlete="{{ $athId }}">
+                                                                        <option
+                                                                            value="auto" {{ (string)$selectedMatch === 'auto' ? 'selected' : '' }}>
+                                                                            Auto (tmId/Service)
+                                                                        </option>
+                                                                        <option
+                                                                            value="new" {{ (string)$selectedMatch === 'new' ? 'selected' : '' }}>
+                                                                            Neu anlegen
+                                                                        </option>
+
+                                                                        @if(!empty($cands))
+                                                                            <option disabled>──────────</option>
+                                                                            @foreach($cands as $c)
+                                                                                @php
+                                                                                    $cid = (int)($c['id'] ?? 0);
+                                                                                    $score = (int)($c['score'] ?? 0);
+                                                                                    $label = (string)($c['label'] ?? '');
+                                                                                    $sel = ((string)$selectedMatch === (string)$cid) ? 'selected' : '';
+                                                                                @endphp
+                                                                                <option value="{{ $cid }}" {{ $sel }}>
+                                                                                    [{{ $score }}] {{ $label }}
+                                                                                </option>
+                                                                            @endforeach
+                                                                        @endif
+                                                                    </select>
+                                                                </div>
+                                                            @endif
+                                                        </td>
+
+                                                        <td>{{ $row['time_fmt'] ?? ($row['swimtime'] ?? '—') }}</td>
+
+                                                        <td class="text-muted">
+                                                            {{ $row['splits_label'] ?? '—' }}
+                                                        </td>
+
+                                                        <td>
+                                                            @if(!empty($blockers) || !empty($warnings))
+                                                                <ul class="mb-0 ps-3 small">
+                                                                    @foreach($blockers as $r)
+                                                                        <li class="text-danger">{{ $r }}</li>
+                                                                    @endforeach
+                                                                    @foreach($warnings as $r)
+                                                                        <li>{{ $r }}</li>
+                                                                    @endforeach
+                                                                </ul>
+                                                            @else
+                                                                <span class="text-muted small">—</span>
+                                                            @endif
+                                                        </td>
+                                                    </tr>
+                                                @endforeach
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                @empty
+                                    <div class="text-muted">Keine Athlete Results.</div>
+                                @endforelse
+                            </div>
+                        </div>
+                    @endif
+
+                    {{-- RELAYS --}}
+                    @if($doRelays)
+                        <div class="card">
+                            <div class="card-header fw-semibold">Relays</div>
+                            <div class="card-body">
+
+                                @forelse($relaysClubs as $club)
+                                    @php
+                                        $nation = $club['nation'] ?? '';
+                                        $clubName = $club['club_name'] ?? '';
+                                        $clubKey = $clubKeyFn($nation, $clubName);
+
+                                        $lenexClubId = $club['club_id'] ?? null;
+                                        $clubSelected = $lenexClubId ? old("club_match.$lenexClubId", $club['club_match_selected'] ?? 'auto') : 'auto';
+                                        $clubCands = $club['club_match_candidates'] ?? [];
+                                    @endphp
+
+                                    <div class="relay-club-block mb-4"
+                                         data-nation="{{ $nation }}"
+                                         data-club="{{ $clubKey }}">
+                                        <div class="d-flex align-items-start justify-content-between gap-2">
+                                            <div>
+                                                <h6 class="mb-1">{{ $clubName ?: '—' }} <small
+                                                        class="text-muted">{{ $nation }}</small></h6>
+                                                <div class="text-muted small">LENEX
+                                                    clubid: {{ $lenexClubId ?: '—' }}</div>
+                                            </div>
+
+                                            @if($lenexClubId)
+                                                <div style="min-width: 320px; max-width: 520px;">
+                                                    <label class="form-label small text-muted mb-1">Club-Match</label>
+                                                    <select name="club_match[{{ $lenexClubId }}]"
+                                                            class="form-select form-select-sm club-match"
+                                                            data-clubid="{{ $lenexClubId }}">
+                                                        <option
+                                                            value="auto" {{ (string)$clubSelected === 'auto' ? 'selected' : '' }}>
+                                                            Auto (tmId/Name)
+                                                        </option>
+                                                        <option
+                                                            value="new" {{ (string)$clubSelected === 'new' ? 'selected' : '' }}>
+                                                            Neuen Club anlegen
+                                                        </option>
+
+                                                        @if(!empty($clubCands))
+                                                            <option disabled>──────────</option>
+                                                            @foreach($clubCands as $c)
+                                                                @php
+                                                                    $cid = (int)($c['id'] ?? 0);
+                                                                    $score = (int)($c['score'] ?? 0);
+                                                                    $label = (string)($c['label'] ?? '');
+                                                                    $sel = ((string)$clubSelected === (string)$cid) ? 'selected' : '';
+                                                                @endphp
+                                                                <option value="{{ $cid }}" {{ $sel }}>
+                                                                    [{{ $score }}] {{ $label }}
+                                                                </option>
                                                             @endforeach
-                                                        </ul>
-                                                    @else
-                                                        —
-                                                    @endif
-                                                </td>
-                                            </tr>
-                                        @endforeach
-                                        </tbody>
-                                    </table>
+                                                        @endif
+                                                    </select>
+                                                </div>
+                                            @endif
+                                        </div>
+
+                                        <div class="table-responsive mt-2">
+                                            <table class="table table-sm align-middle">
+                                                <thead>
+                                                <tr>
+                                                    <th style="width:80px;">Import</th>
+                                                    <th>Event</th>
+                                                    <th>Relay</th>
+                                                    <th style="width:110px;">Time</th>
+                                                    <th>Members (Sportclass)</th>
+                                                    <th>Warnings</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                @foreach(($club['relay_rows'] ?? []) as $row)
+                                                    @php
+                                                        $invalid = (bool)($row['invalid'] ?? false);
+                                                        $warnings = $row['warnings'] ?? [];
+                                                        $blockers = $row['invalid_reasons'] ?? [];
+                                                        $hasWarn = !empty($warnings);
+                                                        $rowClass = $invalid ? 'table-danger' : ($hasWarn ? 'table-warning' : '');
+                                                        $key = $row['lenex_resultid'] ?: $row['result_id'];
+                                                    @endphp
+
+                                                    <tr data-row-type="relay"
+                                                        data-nation="{{ $nation }}"
+                                                        data-club="{{ $clubKey }}"
+                                                        data-relay="{{ $key }}"
+                                                        class="{{ $rowClass }}">
+                                                        <td>
+                                                            <input class="form-check-input relay-cb"
+                                                                   type="checkbox"
+                                                                   name="selected_relays[]"
+                                                                   value="{{ $key }}"
+                                                                   data-row-key="{{ $key }}"
+                                                                {{ $invalid ? 'disabled' : '' }}>
+                                                        </td>
+
+                                                        <td>
+                                                            <strong>{{ $row['relay_event_label'] ?? '—' }}</strong>
+                                                            @if(!empty($row['relay_sportclass']))
+                                                                <span
+                                                                    class="badge bg-secondary ms-2">{{ $row['relay_sportclass'] }}</span>
+                                                            @endif
+                                                            @if(!empty($row['agegroup_name']))
+                                                                <div
+                                                                    class="text-muted small">{{ $row['agegroup_name'] }}</div>
+                                                            @endif
+                                                            <div class="text-muted small">LENEX
+                                                                eventid: {{ $row['lenex_eventid'] ?? '—' }}</div>
+                                                        </td>
+
+                                                        <td>
+                                                            #{{ $row['relay_number'] ?? '—' }}
+                                                            <span
+                                                                class="text-muted small ms-2">{{ $row['relay_gender'] ?? '' }}</span>
+                                                        </td>
+
+                                                        <td>{{ $row['swimtime_fmt'] ?? ($row['swimtime'] ?? '—') }}</td>
+
+                                                        <td>
+                                                            @foreach(($row['positions'] ?? []) as $p)
+                                                                @php
+                                                                    $aid = (string)($p['lenex_athlete_id'] ?? '');
+                                                                    $cands = $p['match_candidates'] ?? [];
+                                                                    $selMatch = old("athlete_match.$aid", $p['match_selected'] ?? 'auto');
+                                                                @endphp
+                                                                <div class="mb-2">
+                                                                    <div>
+                                                                        {{ ($p['last_name'] ?? '—') }}
+                                                                        , {{ ($p['first_name'] ?? '') }}
+                                                                        @if(!empty($p['sport_class']))
+                                                                            <span
+                                                                                class="badge bg-light text-dark ms-2">{{ $p['sport_class'] }}</span>
+                                                                        @endif
+                                                                        <span
+                                                                            class="text-muted small ms-2">leg {{ $p['leg'] ?? '—' }}</span>
+                                                                        <span class="text-muted small ms-2">({{ $aid ?: '—' }})</span>
+                                                                    </div>
+
+                                                                    @if($aid !== '')
+                                                                        <select name="athlete_match[{{ $aid }}]"
+                                                                                class="form-select form-select-sm athlete-match mt-1"
+                                                                                data-athlete="{{ $aid }}">
+                                                                            <option
+                                                                                value="auto" {{ (string)$selMatch === 'auto' ? 'selected' : '' }}>
+                                                                                Auto (tmId/Service)
+                                                                            </option>
+                                                                            <option
+                                                                                value="new" {{ (string)$selMatch === 'new' ? 'selected' : '' }}>
+                                                                                Neu anlegen
+                                                                            </option>
+
+                                                                            @if(!empty($cands))
+                                                                                <option disabled>──────────</option>
+                                                                                @foreach($cands as $c)
+                                                                                    @php
+                                                                                        $cid = (int)($c['id'] ?? 0);
+                                                                                        $score = (int)($c['score'] ?? 0);
+                                                                                        $label = (string)($c['label'] ?? '');
+                                                                                        $sel = ((string)$selMatch === (string)$cid) ? 'selected' : '';
+                                                                                    @endphp
+                                                                                    <option
+                                                                                        value="{{ $cid }}" {{ $sel }}>
+                                                                                        [{{ $score }}] {{ $label }}
+                                                                                    </option>
+                                                                                @endforeach
+                                                                            @endif
+                                                                        </select>
+                                                                    @endif
+                                                                </div>
+                                                            @endforeach
+                                                        </td>
+
+                                                        <td>
+                                                            @if(!empty($blockers) || !empty($warnings))
+                                                                <ul class="mb-0 ps-3 small">
+                                                                    @foreach($blockers as $r)
+                                                                        <li class="text-danger">{{ $r }}</li>
+                                                                    @endforeach
+                                                                    @foreach($warnings as $r)
+                                                                        <li>{{ $r }}</li>
+                                                                    @endforeach
+                                                                </ul>
+                                                            @else
+                                                                <span class="text-muted small">—</span>
+                                                            @endif
+                                                        </td>
+                                                    </tr>
+                                                @endforeach
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                @empty
+                                    <div class="text-muted">Keine Relays.</div>
+                                @endforelse
+
+                                <div class="mt-4 d-flex gap-2">
+                                    <button type="submit" class="btn btn-primary">Import Selected</button>
+                                    <a class="btn btn-outline-secondary"
+                                       href="{{ route('meets.show', $meet) }}">Cancel</a>
                                 </div>
                             </div>
-                        @endforeach
+                        </div>
+                    @else
+                        <div class="mt-4 d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">Import Selected</button>
+                            <a class="btn btn-outline-secondary" href="{{ route('meets.show', $meet) }}">Cancel</a>
+                        </div>
                     @endif
+
                 </div>
             </div>
         </form>
     </div>
 
     <script>
-        (function () {
-            /** @returns {HTMLInputElement|null} */
-            function byIdInput(id) {
-                const el = document.getElementById(id);
-                return el instanceof HTMLInputElement ? el : null;
-            }
+        (() => {
+            const qsa = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+            const qs = (sel, root) => (root || document).querySelector(sel);
 
-            /**
-             * @param {string} sel
-             * @param {ParentNode} [root]
-             * @returns {HTMLInputElement[]}
-             */
-            function inputs(sel, root) {
-                const r = root ?? document;
+            const onlySelected = qs('#onlySelected');
 
-                /** @type {HTMLInputElement[]} */
-                const out = [];
+            const selectAllValid = qs('#selectAllValid');
+            const unselectAllResults = qs('#unselectAllResults');
+            const selectAllRelays = qs('#selectAllRelays');
+            const unselectAllRelays = qs('#unselectAllRelays');
 
-                r.querySelectorAll(sel).forEach((el) => {
-                    if (el instanceof HTMLInputElement) out.push(el);
-                });
-
-                return out;
-            }
-
-            /**
-             * @param {string} sel
-             * @param {*} [root]
-             * @returns {HTMLTableRowElement[]}
-             */
-            function rows(sel, root) {
-                const r = root ?? document;
-                /** @type {HTMLTableRowElement[]} */
-                const out = [];
-                r.querySelectorAll(sel).forEach(el => {
-                    if (el instanceof HTMLTableRowElement) out.push(el);
-                });
-                return out;
-            }
-
-            /**
-             * @param {string} sel
-             * @param {*} [root]
-             * @returns {HTMLElement[]}
-             */
-            function els(sel, root) {
-                const r = root ?? document;
-                /** @type {HTMLElement[]} */
-                const out = [];
-                r.querySelectorAll(sel).forEach(el => {
-                    if (el instanceof HTMLElement) out.push(el);
-                });
-                return out;
-            }
-
-            /**
-             * @param {HTMLInputElement[]} checkboxes
-             * @param {boolean} isChecked
-             */
-            function setChecked(checkboxes, isChecked) {
-                checkboxes.forEach(cb => {
-                    if (cb.disabled) return;
-                    cb.checked = isChecked;
+            function syncSelectByDataAttr(className, dataAttr) {
+                qsa('.' + className).forEach(sel => {
+                    sel.addEventListener('change', (e) => {
+                        const id = e.target.getAttribute(dataAttr);
+                        const val = e.target.value;
+                        qsa('.' + className + '[' + dataAttr + '="' + id + '"]').forEach(s => {
+                            if (s.value !== val) s.value = val;
+                        });
+                    });
                 });
             }
 
-            function escAttr(val) {
-                const v = String(val ?? '');
-                if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(v);
-                return v.replace(/["\\]/g, '\\$&');
+            // Sync athlete dropdown across all occurrences (Results + Relays)
+            syncSelectByDataAttr('athlete-match', 'data-athlete');
+
+            // Sync club dropdown across Results+Relays blocks
+            syncSelectByDataAttr('club-match', 'data-clubid');
+
+            // --- Tree -> Import checkbox selection ---
+            function setResultCheckboxesFor(predicate, checked) {
+                qsa('tr[data-row-type="result"]').forEach(tr => {
+                    if (!predicate(tr)) return;
+                    const cb = qs('input.result-cb', tr);
+                    if (!cb || cb.disabled) return;
+                    cb.checked = checked;
+                });
             }
 
-            const showSelectedOnly = byIdInput('showSelectedOnly');
+            function setRelayCheckboxesFor(predicate, checked) {
+                qsa('tr[data-row-type="relay"]').forEach(tr => {
+                    if (!predicate(tr)) return;
+                    const cb = qs('input.relay-cb', tr);
+                    if (!cb || cb.disabled) return;
+                    cb.checked = checked;
+                });
+            }
 
-            function applyFilter() {
-                const only = !!showSelectedOnly?.checked;
-
-                if (!only) {
-                    rows('tr[data-row-type="result"]').forEach(tr => tr.hidden = false);
-                    rows('tr[data-row-type="relay"]').forEach(tr => tr.hidden = false);
-                    els('.result-club-block').forEach(b => b.hidden = false);
-                    els('.relay-club-block').forEach(b => b.hidden = false);
-                    return;
-                }
-
-                // --- LEFT selection sets (Results) ---
-                const selResNations = new Set(inputs('.tree-results-nation:checked').map(cb => cb.dataset.nation ?? ''));
-                const selResClubs = new Set(inputs('.tree-results-club:checked').map(cb => `${cb.dataset.nation ?? ''}|${cb.dataset.club ?? ''}`));
-                const selAthletes = new Set(inputs('.tree-results-athlete:checked').map(cb => cb.dataset.athlete ?? ''));
-
-                rows('tr[data-row-type="result"]').forEach(tr => {
-                    const n = tr.dataset.nation ?? '';
-                    const c = tr.dataset.club ?? '';
-                    const a = tr.dataset.athlete ?? '';
-                    const show = selResNations.has(n) || selResClubs.has(`${n}|${c}`) || selAthletes.has(a);
-                    tr.hidden = !show;
+            function syncParents() {
+                qsa('.tree-club').forEach(clubCb => {
+                    const nation = clubCb.dataset.nation;
+                    const club = clubCb.dataset.club;
+                    const kids = qsa('.tree-athlete[data-nation="' + nation + '"][data-club="' + club + '"]');
+                    if (kids.length) clubCb.checked = kids.every(c => c.checked);
                 });
 
-                // --- LEFT selection sets (Relays) ---
-                const selRelNations = new Set(inputs('.tree-relays-nation:checked').map(cb => cb.dataset.nation ?? ''));
-                const selRelClubs = new Set(inputs('.tree-relays-club:checked').map(cb => `${cb.dataset.nation ?? ''}|${cb.dataset.club ?? ''}`));
-                const selRelays = new Set(inputs('.tree-relays-relay:checked').map(cb => cb.dataset.relay ?? ''));
+                qsa('.tree-nation').forEach(natCb => {
+                    const nation = natCb.dataset.nation;
+                    const clubs = qsa('.tree-club[data-nation="' + nation + '"]');
+                    if (clubs.length) natCb.checked = clubs.every(c => c.checked);
+                });
+            }
 
-                rows('tr[data-row-type="relay"]').forEach(tr => {
-                    const n = tr.dataset.nation ?? '';
-                    const c = tr.dataset.club ?? '';
-                    const r = tr.dataset.relay ?? '';
-                    const show = selRelNations.has(n) || selRelClubs.has(`${n}|${c}`) || selRelays.has(r);
-                    tr.hidden = !show;
+            function syncTreeFromSelectedResults() {
+                // if any result for athlete is selected -> athlete checked
+                qsa('.tree-athlete').forEach(aCb => {
+                    const aid = aCb.dataset.athlete;
+                    aCb.checked = qsa('tr[data-row-type="result"][data-athlete="' + aid + '"] input.result-cb')
+                        .some(cb => cb.checked);
+                });
+                syncParents();
+            }
+
+            // --- Visibility ---
+            function applyVisibility() {
+                const only = !!onlySelected?.checked;
+
+                const selectedAthletes = new Set(qsa('.tree-athlete:checked').map(cb => cb.dataset.athlete));
+                const selectedClubs = new Set(qsa('.tree-club:checked').map(cb => cb.dataset.club));
+                const selectedNations = new Set(qsa('.tree-nation:checked').map(cb => cb.dataset.nation));
+
+                const treeActive = selectedAthletes.size || selectedClubs.size || selectedNations.size;
+
+                // Results rows
+                qsa('tr[data-row-type="result"]').forEach(tr => {
+                    const cb = qs('input.result-cb', tr);
+                    const isChosen = cb ? cb.checked : false;
+
+                    let visible = true;
+
+                    // tree filter (optional)
+                    if (treeActive) {
+                        const a = tr.dataset.athlete || '';
+                        const c = tr.dataset.club || '';
+                        const n = tr.dataset.nation || '';
+
+                        if (selectedAthletes.size) visible = selectedAthletes.has(a);
+                        else if (selectedClubs.size) visible = selectedClubs.has(c);
+                        else if (selectedNations.size) visible = selectedNations.has(n);
+                    }
+
+                    // only-selected filter
+                    if (only) visible = visible && isChosen;
+
+                    tr.hidden = !visible;
                 });
 
-                // Hide empty blocks
-                els('.result-club-block').forEach(block => {
-                    const anyVisible = rows('tr[data-row-type="result"]', block).some(tr => !tr.hidden);
+                // Relay rows
+                qsa('tr[data-row-type="relay"]').forEach(tr => {
+                    const cb = qs('input.relay-cb', tr);
+                    const isChosen = cb ? cb.checked : false;
+
+                    let visible = true;
+
+                    // tree filter: only nations/clubs (athlete selection shouldn't hide relays)
+                    if (treeActive) {
+                        const c = tr.dataset.club || '';
+                        const n = tr.dataset.nation || '';
+
+                        if (selectedClubs.size) visible = selectedClubs.has(c);
+                        else if (selectedNations.size) visible = selectedNations.has(n);
+                    }
+
+                    if (only) visible = visible && isChosen;
+
+                    tr.hidden = !visible;
+                });
+
+                // Hide club blocks if no visible rows
+                qsa('.result-club-block').forEach(block => {
+                    const anyVisible = qsa('tr[data-row-type="result"]', block).some(tr => !tr.hidden);
                     block.hidden = !anyVisible;
                 });
 
-                els('.relay-club-block').forEach(block => {
-                    const anyVisible = rows('tr[data-row-type="relay"]', block).some(tr => !tr.hidden);
+                qsa('.relay-club-block').forEach(block => {
+                    const anyVisible = qsa('tr[data-row-type="relay"]', block).some(tr => !tr.hidden);
                     block.hidden = !anyVisible;
                 });
             }
 
-            // Toggle all valid results / relays
-            document.getElementById('toggleAllResults')?.addEventListener('click', () => {
-                const boxes = inputs('.result-cb').filter(cb => !cb.disabled);
-                const anyUnchecked = boxes.some(cb => !cb.checked);
-                setChecked(boxes, anyUnchecked);
-                applyFilter();
+            // --- Tree events: set import checkboxes ---
+            qsa('.tree-athlete').forEach(cb => cb.addEventListener('change', (e) => {
+                const aid = e.target.dataset.athlete;
+                setResultCheckboxesFor(tr => (tr.dataset.athlete || '') === aid, e.target.checked);
+                syncParents();
+                applyVisibility();
+            }));
+
+            qsa('.tree-club').forEach(cb => cb.addEventListener('change', (e) => {
+                const club = e.target.dataset.club;
+                const nation = e.target.dataset.nation;
+                const checked = e.target.checked;
+
+                // toggle athletes under club
+                qsa('.tree-athlete[data-nation="' + nation + '"][data-club="' + club + '"]').forEach(x => x.checked = checked);
+
+                // toggle results under club
+                setResultCheckboxesFor(tr => (tr.dataset.club || '') === club, checked);
+
+                // toggle relays under club
+                setRelayCheckboxesFor(tr => (tr.dataset.club || '') === club, checked);
+
+                syncParents();
+                applyVisibility();
+            }));
+
+            qsa('.tree-nation').forEach(cb => cb.addEventListener('change', (e) => {
+                const nation = e.target.dataset.nation;
+                const checked = e.target.checked;
+
+                qsa('.tree-club[data-nation="' + nation + '"]').forEach(x => x.checked = checked);
+                qsa('.tree-athlete[data-nation="' + nation + '"]').forEach(x => x.checked = checked);
+
+                // toggle results under nation
+                setResultCheckboxesFor(tr => (tr.dataset.nation || '') === nation, checked);
+
+                // toggle relays under nation
+                setRelayCheckboxesFor(tr => (tr.dataset.nation || '') === nation, checked);
+
+                syncParents();
+                applyVisibility();
+            }));
+
+            // --- Manual checkbox changes update tree + visibility ---
+            qsa('input.result-cb').forEach(cb => cb.addEventListener('change', () => {
+                syncTreeFromSelectedResults();
+                applyVisibility();
+            }));
+            qsa('input.relay-cb').forEach(cb => cb.addEventListener('change', () => {
+                applyVisibility();
+            }));
+
+            onlySelected?.addEventListener('change', () => applyVisibility());
+
+            // --- Buttons ---
+            selectAllValid?.addEventListener('click', () => {
+                qsa('input.result-cb').forEach(cb => {
+                    if (!cb.disabled) cb.checked = true;
+                });
+                syncTreeFromSelectedResults();
+                applyVisibility();
             });
 
-            document.getElementById('toggleAllRelays')?.addEventListener('click', () => {
-                const boxes = inputs('.relay-cb').filter(cb => !cb.disabled);
-                const anyUnchecked = boxes.some(cb => !cb.checked);
-                setChecked(boxes, anyUnchecked);
-                applyFilter();
+            unselectAllResults?.addEventListener('click', () => {
+                qsa('input.result-cb').forEach(cb => {
+                    if (!cb.disabled) cb.checked = false;
+                });
+                syncTreeFromSelectedResults();
+                applyVisibility();
             });
 
-            // Event delegation
-            document.addEventListener('change', (e) => {
-                const t = e.target;
-
-                // direct click on import checkboxes or filter checkbox
-                if (t instanceof HTMLInputElement && (t.classList.contains('result-cb') || t.classList.contains('relay-cb') || t.id === 'showSelectedOnly')) {
-                    applyFilter();
-                    return;
-                }
-
-                if (!(t instanceof HTMLInputElement)) return;
-
-                // RESULTS tree
-                if (t.classList.contains('tree-results-nation')) {
-                    const nation = escAttr(t.dataset.nation ?? '');
-                    const boxes = inputs(`tr[data-row-type="result"][data-nation="${nation}"] .result-cb`);
-                    setChecked(boxes, t.checked);
-                    applyFilter();
-                    return;
-                }
-
-                if (t.classList.contains('tree-results-club')) {
-                    const nation = escAttr(t.dataset.nation ?? '');
-                    const club = escAttr(t.dataset.club ?? '');
-                    const boxes = inputs(`tr[data-row-type="result"][data-nation="${nation}"][data-club="${club}"] .result-cb`);
-                    setChecked(boxes, t.checked);
-                    applyFilter();
-                    return;
-                }
-
-                if (t.classList.contains('tree-results-athlete')) {
-                    const nation = escAttr(t.dataset.nation ?? '');
-                    const club = escAttr(t.dataset.club ?? '');
-                    const athlete = escAttr(t.dataset.athlete ?? '');
-                    const boxes = inputs(`tr[data-row-type="result"][data-nation="${nation}"][data-club="${club}"][data-athlete="${athlete}"] .result-cb`);
-                    setChecked(boxes, t.checked);
-                    applyFilter();
-                    return;
-                }
-
-                // RELAYS tree
-                if (t.classList.contains('tree-relays-nation')) {
-                    const nation = escAttr(t.dataset.nation ?? '');
-                    const boxes = inputs(`tr[data-row-type="relay"][data-nation="${nation}"] .relay-cb`);
-                    setChecked(boxes, t.checked);
-                    applyFilter();
-                    return;
-                }
-
-                if (t.classList.contains('tree-relays-club')) {
-                    const nation = escAttr(t.dataset.nation ?? '');
-                    const club = escAttr(t.dataset.club ?? '');
-                    const boxes = inputs(`tr[data-row-type="relay"][data-nation="${nation}"][data-club="${club}"] .relay-cb`);
-                    setChecked(boxes, t.checked);
-                    applyFilter();
-                    return;
-                }
-
-                if (t.classList.contains('tree-relays-relay')) {
-                    // aktuell kein Mapping nötig, da Relay-Tree nicht direkt Table-Checkboxes mapped
-                    applyFilter();
-
-                }
+            selectAllRelays?.addEventListener('click', () => {
+                qsa('input.relay-cb').forEach(cb => {
+                    if (!cb.disabled) cb.checked = true;
+                });
+                applyVisibility();
             });
 
-            showSelectedOnly?.addEventListener('change', applyFilter);
-            applyFilter();
+            unselectAllRelays?.addEventListener('click', () => {
+                qsa('input.relay-cb').forEach(cb => {
+                    if (!cb.disabled) cb.checked = false;
+                });
+                applyVisibility();
+            });
+
+            // init
+            syncTreeFromSelectedResults();
+            applyVisibility();
         })();
     </script>
-
 @endsection

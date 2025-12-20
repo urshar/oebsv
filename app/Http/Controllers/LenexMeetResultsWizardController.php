@@ -62,7 +62,12 @@ class LenexMeetResultsWizardController extends Controller
 
         $root = $lenex->loadLenexRootFromPath($absolutePath);
 
-        $meetStructure->ensureMeetAndStructureForMeet($root, $meet);
+        try {
+            // Wenn Meet/Struktur nicht vorhanden: zuerst anlegen/importieren
+            $meetStructure->ensureMeetAndStructureForMeet($root, $meet);
+        } catch (RuntimeException $e) {
+            return back()->withErrors(['lenex_file' => $e->getMessage()]);
+        }
 
         $resultsData = $doResults ? $resultsPreview->build($root, $meet) : null;
         $relaysData = $doRelays ? $relaysPreview->build($root, $meet) : null;
@@ -83,8 +88,6 @@ class LenexMeetResultsWizardController extends Controller
     public function import(
         Request $request,
         ParaMeet $meet,
-        LenexImportService $lenex,
-        LenexMeetStructureImportService $meetStructure,
         LenexResultsImporter $resultsImporter,
         LenexRelayImporter $relayImporter
     ): RedirectResponse {
@@ -96,9 +99,16 @@ class LenexMeetResultsWizardController extends Controller
 
             'selected_relays' => ['nullable', 'array'],
             'selected_relays.*' => ['string'],
+
+            'athlete_match' => ['nullable', 'array'],
+            'athlete_match.*' => ['nullable', 'string'],
+
+            'club_match' => ['nullable', 'array'],
+            'club_match.*' => ['nullable', 'string'],
         ]);
 
-        $relativePath = (string) $data['lenex_file_path'];
+
+        $relativePath = $data['lenex_file_path'];
 
         if (!Storage::disk('local')->exists($relativePath)) {
             throw new RuntimeException('LENEX-Datei nicht mehr gefunden. Bitte Preview neu laden.');
@@ -106,23 +116,18 @@ class LenexMeetResultsWizardController extends Controller
 
         $absolutePath = Storage::disk('local')->path($relativePath);
 
-        $root = $lenex->loadLenexRootFromPath($absolutePath);
-        $meetStructure->ensureMeetAndStructureForMeet($root, $meet);
+        $selectedResults = $data['selected_results'] ?? [];
+        $selectedRelays = $data['selected_relays'] ?? [];
+
+        $athleteMatch = $data['athlete_match'] ?? [];
+        $clubMatch = $data['club_match'] ?? [];
 
         if (!empty($selectedResults)) {
-            $resultsImporter->importSelected($absolutePath, $meet, $selectedResults);
+            $resultsImporter->importSelected($absolutePath, $meet, $selectedResults, $athleteMatch, $clubMatch);
         }
 
         if (!empty($selectedRelays)) {
-            $relayImporter->import($absolutePath, $meet, $selectedRelays);
-        }
-
-        if (!empty($selectedResults)) {
-            $resultsImporter->importSelected($absolutePath, $meet, $selectedResults);
-        }
-
-        if (!empty($selectedRelays)) {
-            $relayImporter->import($absolutePath, $meet, $selectedRelays);
+            $relayImporter->import($absolutePath, $meet, $selectedRelays, $athleteMatch, $clubMatch);
         }
 
         // optional: tmp löschen
